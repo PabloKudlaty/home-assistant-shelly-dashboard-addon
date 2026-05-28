@@ -1,45 +1,5 @@
 # Changelog
 
-## 2.0.0 — Refaktoring
-
-Gruntowna refaktoryzacja całego kodu źródłowego — poprawa stabilności, bezpieczeństwa, wydajności i czytelności.
-
-### 🔴 Naprawione błędy
-
-- **Thread-safety `api_add`**: wątek tła modyfikował `devices` bez blokady — dodano `state.lock` w `_background_add()`
-- **Thread-safety `api_relay`**: `query()` wykonywane wewnątrz `with s.lock` blokowało cały dashboard na czas zapytań HTTP — `query_device()` przeniesione poza blokadę, lock tylko na zapis wyniku
-- **Thread-safety `api_summary`**: `list(s.devices.values())` tworzył płytkie referencje do wewnętrznych słowników — zamieniono na `copy.deepcopy()` pod blokadą
-- **Thread-safety flag `refreshing`/`fw`**: flagi statusu ustawiane bez blokady — wszystkie zmiany flag przeniesione do `with state.lock:`
-- **`gen()` bez uwierzytelnienia**: na urządzeniach z hasłem `/shelly` zwracał 401 → generacja wykrywana jako 0 — `detect_generation()` próbuje teraz kolejno `_auth_gen1()`, `_auth_gen2()`, brak auth
-- **Zmienna `sys` przesłaniała moduł**: w `query()` zmienna lokalna `sys = st.get('sys', {})` nadpisywała moduł standardowy — zmieniono nazwę na `sys_info`
-- **`mdns()` zwracał `None`**: brak `zeroconf` powodował `TypeError` w `discover()` → `found.update(None)` — `discover_mdns()` zwraca teraz `{}` jawnie
-
-### 🟡 Wydajność i architektura
-
-- **Cache'owanie generacji**: `detect_generation()` sprawdza najpierw `state.devices[ip]['generation']` — eliminuje redundantne zapytania HTTP do `/shelly` (~40% mniej round-tripów)
-- **`requests.Session` per wątek**: połączenia HTTP są reużywane dzięki `threading.local()` + `_get_session()` — znacząca redukcja opóźnień TCP
-- **Podział `query()`**: monolityczna funkcja (~60 linii) rozbita na `_query_gen1()`, `_query_gen2()` i dyspozytor `query_device()` — łatwiejsze testowanie i rozszerzanie
-- **Ograniczenie zakresu skanowania CIDR**: `scan_network()` rzuca `ValueError` gdy sieć > 1024 hostów — ochrona przed przypadkowym skanowaniem `/16` lub `/8`
-- **Logging zamiast `except: pass`**: dodano `logging.getLogger(__name__)` z `log.debug()` / `log.warning()` / `log.error()` — 10+ miejsc z cichym `except Exception: pass` zastąpionych logowaniem
-- **Stałe health-score**: magiczne wartości progów i wag (35, 15, 10, −60, −70…) wyekstrahowane do stałych modułowych (`HEALTH_WEIGHT_*`, `RSSI_*`, `LATENCY_*`, `HEALTH_LEVEL_*`)
-
-### 🟠 Bezpieczeństwo
-
-- **Opcjonalny klucz API**: dekorator `@require_api_key` na wszystkich endpointach POST — sprawdza nagłówek `X-API-Key`; konfiguracja przez `--api-key` w CLI
-- **Ochrona przed SSRF w `api_add`**: nowa funkcja `_validate_ip()` odrzuca adresy loopback, link-local, multicast i reserved — zapobiega wykorzystaniu serwera jako proxy do zasobów wewnętrznych
-- **Konfigurowalny użytkownik Gen2**: `_auth_gen2()` używa `state.cfg.user or 'admin'` zamiast zahardkodowanego `'admin'`
-
-### 🔵 Jakość kodu
-
-- **Formatowanie PEP 8**: jedna instrukcja na linię, 4-spacjowe wcięcia, brak średników
-- **Opisowe nazwy zmiennych**: `s` → `state`, `d` → `device`, `g` → `generation`, `r` → `resp`, `w` → `wifi`, `l` → `listener`, `z` → `zc`, `b` → `browser`
-- **Type hints**: adnotacje typów na wszystkich sygnaturach funkcji (`def query_device(ip: str) -> dict:`)
-- **Docstringi**: dokumentacja na każdej publicznej funkcji i klasie
-- **Specyficzne wyjątki**: `except Exception` zamienione na `requests.RequestException`, `ValueError`, `KeyError` w zależności od kontekstu
-- **`@dataclass Config`**: konfiguracja runtime'u jako dataklasa z domyślnymi wartościami zamiast mutowalnych atrybutów klasowych
-- **`State.__init__`**: atrybuty instancji zamiast współdzielonych atrybutów klasowych (`devices={}` → `self.devices = {}`)
-- **`argparse` z opisami**: wszystkie argumenty CLI z parametrem `help`, dodano nowy `--api-key`
-
 ## 1.10.0
 
 - Pobieranie **nazw kanałów** zdefiniowanych przez użytkownika (Switch/Input/Cover/Light)
