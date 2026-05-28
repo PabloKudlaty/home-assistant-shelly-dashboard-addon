@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.9.3
+
+- Hotfix: naprawiono uszkodzony blok Gen1 w `query()` (SyntaxError uniemożliwiał start dodatku po 1.9.2)
+
 ## 1.9.2
 
 - Pobieranie nazwy urządzenia bardziej odporne: Gen2+ używa `Shelly.GetConfig` → fallback `Sys.GetConfig`

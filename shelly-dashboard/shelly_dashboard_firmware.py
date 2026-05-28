@@ -158,14 +158,14 @@ def query(ip):
             info=requests.get(f'http://{ip}/shelly',timeout=s.cfg['timeout'],auth=auth1()).json()
             d.update({'online':True,'model':info.get('type'),'firmware':info.get('fw'),'firmware_current':info.get('fw'),'hostname':info.get('hostname') or info.get('mac')})
             try:
-                st=requests.get(f'http://{ip}/status',timeout=s.cfg['timeout'],auth=auth1()).json(); w=st.get('wifi_sta',{}); d['hostname']=((sett.get('device') or {}).get('hostname')) or d.get('hostname')
-            except Exception: pass
-            if not d.get('device_name'): d['device_name']=d.get('hostname') or si'),'switches':[{'id':i,'is_on':x.get('ison',False)} for i,x in enumerate(st.get('relays',[]))]})
+                st=requests.get(f'http://{ip}/status',timeout=s.cfg['timeout'],auth=auth1()).json(); w=st.get('wifi_sta',{})
+                d.update({'wifi_rssi':w.get('rssi'),'switches':[{'id':i,'is_on':x.get('ison',False)} for i,x in enumerate(st.get('relays',[]))]})
                 m=st.get('meters',[]); d['total_power_w']=round(sum(x.get('power',0) or 0 for x in m),2)
             except Exception: pass
             try:
-                sett=requests.get(f'http://{ip}/settings',timeout=s.cfg['timeout'],auth=auth1()).json(); d['device_name']=sett.get('name') or d.get('model'); d['hostname']=((sett.get('device') or {}).get('hostname')) or d.get('hostname')
-            except Exception: d['device_name']=d.get('model')
+                sett=requests.get(f'http://{ip}/settings',timeout=s.cfg['timeout'],auth=auth1()).json(); d['device_name']=sett.get('name'); d['hostname']=((sett.get('device') or {}).get('hostname')) or d.get('hostname')
+            except Exception: pass
+            if not d.get('device_name'): d['device_name']=d.get('hostname') or d.get('model')
         d.update(check_fw(ip,d)); d.update(check_web(ip)); d.update(compute_health(d)); return d
     except Exception as e:
         d['error']=str(e); d.update(check_web(ip)); d.update(compute_health(d)); return d
