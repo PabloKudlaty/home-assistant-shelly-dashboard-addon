@@ -276,11 +276,14 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:'Segoe UI',syst
 .btn.warn{background:var(--warn)} .btn.ok{background:var(--ok)} .btn.bad{background:var(--bad)}
 .btn.sm{padding:6px 10px;font-size:.8rem;border-radius:8px}
 .wrap{padding:22px;max-width:1400px;margin:0 auto}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:18px}
-.stat{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px;box-shadow:var(--shadow)}
-.stat .v{font-size:1.9rem;font-weight:800;line-height:1.1}
-.stat .l{color:var(--mut);font-size:.85rem;margin-top:4px}
-.stat .ico{float:right;font-size:1.4rem;opacity:.6}
+.stats{display:flex;flex-wrap:nowrap;gap:8px;margin-bottom:14px;overflow-x:auto;padding-bottom:4px}
+.stat{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:8px 12px;box-shadow:var(--shadow);
+  display:flex;align-items:center;gap:8px;flex:1 1 0;min-width:120px;white-space:nowrap}
+.stat .v{font-size:1.15rem;font-weight:800;line-height:1}
+.stat .l{color:var(--mut);font-size:.7rem;margin:0;text-transform:uppercase;letter-spacing:.03em}
+.stat .ico{float:none;font-size:1.05rem;opacity:.7;margin:0}
+.stat .col{display:flex;flex-direction:column;min-width:0}
+@media (max-width:900px){.stats{flex-wrap:wrap}.stat{flex:1 1 calc(33% - 8px);min-width:0}}
 .bar{display:flex;gap:10px;margin:8px 0 18px;flex-wrap:wrap;align-items:center}
 .inp{padding:10px 12px;border-radius:10px;background:var(--panel);color:var(--text);
   border:1px solid var(--border);min-width:160px;outline:none;transition:border-color .15s}
@@ -380,16 +383,16 @@ html[data-theme="light"] .sw-row{background:rgba(15,23,42,.04)}
 
 <div class="wrap">
   <div class="stats">
-    <div class="stat"><span class="ico">📦</span><div class="v" id="total">-</div><div class="l" data-i18n="devices">Urządzenia</div></div>
-    <div class="stat"><span class="ico">🟢</span><div class="v" id="online">-</div><div class="l" data-i18n="online">Online</div></div>
-    <div class="stat"><span class="ico">🔴</span><div class="v" id="offline">-</div><div class="l" data-i18n="offline">Offline</div></div>
-    <div class="stat"><span class="ico">⚡</span><div class="v" id="power">-</div><div class="l" data-i18n="total_power">Moc całkowita (W)</div></div>
-    <div class="stat"><span class="ico">⬆</span><div class="v" id="updates">-</div><div class="l" data-i18n="updates">Aktualizacje</div></div>
-    <div class="stat"><span class="ico">✅</span><div class="v" id="latest">-</div><div class="l" data-i18n="up_to_date">Aktualne</div></div>
-    <div class="stat"><span class="ico">🌐</span><div class="v" id="web_ok">-</div><div class="l" data-i18n="web_ok_stat">Web OK</div></div>
-    <div class="stat"><span class="ico">⚠️</span><div class="v" id="web_bad">-</div><div class="l" data-i18n="web_bad_stat">Web błąd</div></div>
-    <div class="stat"><span class="ico">❤️</span><div class="v" id="health_avg">-</div><div class="l" data-i18n="health_avg">Średnia kondycja</div></div>
-    <div class="stat"><span class="ico">🚨</span><div class="v" id="health_issues">-</div><div class="l" data-i18n="health_issues_stat">Problemy</div></div>
+    <div class="stat"><span class="ico">📦</span><span class="col"><span class="v" id="total">-</span><span class="l" data-i18n="devices">Urządzenia</span></span></div>
+    <div class="stat"><span class="ico">🟢</span><span class="col"><span class="v" id="online">-</span><span class="l" data-i18n="online">Online</span></span></div>
+    <div class="stat"><span class="ico">🔴</span><span class="col"><span class="v" id="offline">-</span><span class="l" data-i18n="offline">Offline</span></span></div>
+    <div class="stat"><span class="ico">⚡</span><span class="col"><span class="v" id="power">-</span><span class="l" data-i18n="total_power">Moc (W)</span></span></div>
+    <div class="stat"><span class="ico">⬆</span><span class="col"><span class="v" id="updates">-</span><span class="l" data-i18n="updates">Aktualizacje</span></span></div>
+    <div class="stat"><span class="ico">✅</span><span class="col"><span class="v" id="latest">-</span><span class="l" data-i18n="up_to_date">Aktualne</span></span></div>
+    <div class="stat"><span class="ico">🌐</span><span class="col"><span class="v" id="web_ok">-</span><span class="l" data-i18n="web_ok_stat">Web OK</span></span></div>
+    <div class="stat"><span class="ico">⚠️</span><span class="col"><span class="v" id="web_bad">-</span><span class="l" data-i18n="web_bad_stat">Web błąd</span></span></div>
+    <div class="stat"><span class="ico">❤️</span><span class="col"><span class="v" id="health_avg">-</span><span class="l" data-i18n="health_avg">Kondycja</span></span></div>
+    <div class="stat"><span class="ico">🚨</span><span class="col"><span class="v" id="health_issues">-</span><span class="l" data-i18n="health_issues_stat">Problemy</span></span></div>
   </div>
 
   <div class="bar">
@@ -414,7 +417,7 @@ html[data-theme="light"] .sw-row{background:rgba(15,23,42,.04)}
 <script>
 const I18N={
   pl:{theme:'Motyw',discover:'Odkryj',refresh:'Odśwież',firmware:'Firmware',devices:'Urządzenia',online:'Online',offline:'Offline',
-     total_power:'Moc całkowita (W)',updates:'Aktualizacje',up_to_date:'Aktualne',all:'Wszystkie',add:'Dodaj',
+     total_power:'Moc (W)',updates:'Aktualizacje',up_to_date:'Aktualne',all:'Wszystkie',add:'Dodaj',
      search_ph:'🔎 Szukaj po nazwie / IP / modelu...',ip_ph:'np. 192.168.1.50',loading:'Ładowanie...',
      last_refresh:'Ostatnie odświeżenie',refreshing_status:'⏳ odświeżanie...',
      model:'Model',hostname:'Hostname',fw:'Firmware',wifi:'WiFi',eth:'Ethernet',uptime:'Czas pracy',power:'Moc',channel:'Kanał',
@@ -422,7 +425,7 @@ const I18N={
      eth_na:'N/A',eth_none:'brak',eth_disc:'odłączony',eth_conn:'połączony',
      web_label:'Web UI',web_ok:'OK',web_timeout:'timeout',web_error:'błąd',web_auth:'wymaga logowania',web_never:'nie sprawdzano',
      web_ok_stat:'Web OK',web_bad_stat:'Web błąd',
-     health:'Kondycja',health_avg:'Średnia kondycja',health_issues_stat:'Problemy',issues_filter:'Problemy',
+     health:'Kondycja',health_avg:'Kondycja',health_issues_stat:'Problemy',issues_filter:'Problemy',
      iss_offline:'Offline',iss_web_auth:'Web: wymaga logowania',iss_web_timeout:'Web: timeout',iss_web_error:'Web: błąd',
      iss_fw_update:'Dostępna aktualizacja FW',iss_fw_check_error:'Błąd sprawdzania FW',iss_wifi_weak:'Słaby sygnał WiFi',iss_wifi_poor:'Bardzo słaby sygnał WiFi',
      iss_no_connectivity:'Brak łączności',iss_api_error:'Błąd API',iss_recent_reboot:'Niedawny restart',iss_web_slow:'Wolny Web UI',
@@ -430,7 +433,7 @@ const I18N={
      msg_discovering:'Skanowanie sieci...',msg_refreshing:'Odświeżanie...',msg_checking_fw:'Sprawdzanie firmware...',
      msg_check_one:'Sprawdzam FW...',msg_check_web:'Sprawdzam Web UI...',msg_on:'Włączanie...',msg_off:'Wyłączanie...',msg_add:'Dodano',msg_need_ip:'Podaj IP'},
   en:{theme:'Theme',discover:'Discover',refresh:'Refresh',firmware:'Firmware',devices:'Devices',online:'Online',offline:'Offline',
-     total_power:'Total power (W)',updates:'Updates',up_to_date:'Up to date',all:'All',add:'Add',
+     total_power:'Power (W)',updates:'Updates',up_to_date:'Up to date',all:'All',add:'Add',
      search_ph:'🔎 Search by name / IP / model...',ip_ph:'e.g. 192.168.1.50',loading:'Loading...',
      last_refresh:'Last refresh',refreshing_status:'⏳ refreshing...',
      model:'Model',hostname:'Hostname',fw:'Firmware',wifi:'WiFi',eth:'Ethernet',uptime:'Uptime',power:'Power',channel:'Channel',
@@ -438,7 +441,7 @@ const I18N={
      eth_na:'N/A',eth_none:'none',eth_disc:'disconnected',eth_conn:'connected',
      web_label:'Web UI',web_ok:'OK',web_timeout:'timeout',web_error:'error',web_auth:'auth required',web_never:'not checked',
      web_ok_stat:'Web OK',web_bad_stat:'Web error',
-     health:'Health',health_avg:'Avg health',health_issues_stat:'Issues',issues_filter:'Issues',
+     health:'Health',health_avg:'Health',health_issues_stat:'Issues',issues_filter:'Issues',
      iss_offline:'Offline',iss_web_auth:'Web: auth required',iss_web_timeout:'Web: timeout',iss_web_error:'Web: error',
      iss_fw_update:'Firmware update available',iss_fw_check_error:'Firmware check failed',iss_wifi_weak:'Weak WiFi signal',iss_wifi_poor:'Very poor WiFi signal',
      iss_no_connectivity:'No connectivity',iss_api_error:'API error',iss_recent_reboot:'Recently rebooted',iss_web_slow:'Slow Web UI',
@@ -507,7 +510,7 @@ function healthBar(d){
 }
 function render(){
   const q=$('q').value.trim();
-  const list=DEVS.filter(d=>passFilter(d)&&matches(d,q)).sort((a,b)=>(a.device_name||a.ip).localeCompare(b.device_name||b.ip));
+  const list=DEVS.filter(d=>passFilter(d)&&matches(d,q)).sort((a,b)=>(a.hostname||a.device_name||a.ip).localeCompare(b.hostname||b.device_name||b.ip));
   const g=$('grid');
   if(!list.length){g.innerHTML=`<div class="empty" style="grid-column:1/-1"><div class="big">📬</div><div>${t('no_devices')}</div></div>`;applyView();return}
   if(VIEW==='list'){
@@ -515,7 +518,7 @@ function render(){
       const fw=(d.firmware_current||d.firmware||'?')+(d.firmware_latest&&d.firmware_latest!=d.firmware_current?` <span class="badge b-warn">→ ${d.firmware_latest}</span>`:'');
       return `<div class="card">
         <div class="head">
-          <div><h3>${d.device_name||d.model||'Shelly'}</h3><div class="ip">${d.ip} · Gen ${d.generation||1}</div></div>
+          <div><h3>${d.hostname||d.device_name||d.model||'Shelly'}</h3><div class="ip">${d.ip} · ${d.device_name||d.model||'-'} · Gen ${d.generation||1}</div></div>
           ${statusBadge(d)}
         </div>
         <div class="l-cell"><span class="lbl">${t('health')}</span><span class="val" style="color:var(--${d.health_level==='good'?'ok':d.health_level==='warn'?'warn':'bad'})">${d.health_score!=null?d.health_score+'%':'-'}</span></div>
@@ -540,7 +543,7 @@ function render(){
       <span class="toggle ${x.is_on?'on':''}" onclick="tog('${d.ip}','${x.id}',${x.is_on})"></span></div>`).join('');
     return `<div class="card">
       <div class="head">
-        <div><h3>${d.device_name||d.model||'Shelly'}</h3><div class="ip">${d.ip} · Gen ${d.generation||1}</div></div>
+        <div><h3>${d.hostname||d.device_name||d.model||'Shelly'}</h3><div class="ip">${d.ip} · ${d.device_name||d.model||'-'} · Gen ${d.generation||1}</div></div>
         ${statusBadge(d)}
       </div>
       ${healthBar(d)}

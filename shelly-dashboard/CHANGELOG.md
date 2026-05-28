@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.9.0
+
+- Górna belka statystyk: kompaktowa, **wszystkie 10 kafelków w jednej linii** (poziomy układ, ikona obok wartości)
+- Na wąskich ekranach (<900 px) automatyczne zawijanie do 3 kolumn
+- **Hostname jako tytuł karty urządzenia**; model i IP przeniesione do linii pod tytułem
+- Sortowanie listy urządzeń teraz po hostname (z fallbackiem do device_name/IP)
+- Skrócone etykiety: „Moc", „Kondycja"
+
 ## 1.8.0
 
 - Dodano **wskaźnik kondycji urządzenia (Health Score 0–100)** wyliczany na podstawie ważonej oceny:
