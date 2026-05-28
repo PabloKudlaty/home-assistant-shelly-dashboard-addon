@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.7.0
+
+- Dodano **kontrolę dostępności panelu Web** każdego urządzenia (sprawdzanie `GET http://<ip>/`)
+- Nowy wiersz **Web UI** na kartach: ✅ OK / ⏱ timeout / ❌ błąd / 🔐 wymaga logowania, z kodem HTTP i czasem odpowiedzi (ms)
+- Dwa nowe kafelki statystyk: **Web OK** i **Web błąd**
+- Przycisk akcji **🌐 Test Web** dla pojedynczego urządzenia + endpoint `POST /api/device/<ip>/web/check`
+- Test wykonywany automatycznie przy każdym odświeżeniu (`refresh`)
+
 ## 1.6.0
 
 - Dodano **trzy tryby widoku** urządzeń przełączane w pasku narzędziowym:

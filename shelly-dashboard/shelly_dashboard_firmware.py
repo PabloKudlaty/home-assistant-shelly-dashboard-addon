@@ -82,6 +82,17 @@ def check_fw(ip,dev=None):
                 except Exception: pass
             return fw_status(cur,latest,has=has)
         except Exception as e: return fw_status(cur,err=str(e))
+def check_web(ip):
+    t0=time.time()
+    try:
+        r=requests.get(f'http://{ip}/',timeout=s.cfg['timeout'],auth=auth1(),allow_redirects=True)
+        ms=int((time.time()-t0)*1000)
+        ok=200<=r.status_code<400 or r.status_code==401
+        return {'web_status':'ok' if ok else 'error','web_code':r.status_code,'web_latency_ms':ms,'web_auth_required':r.status_code==401,'web_checked_at':now()}
+    except requests.exceptions.Timeout:
+        return {'web_status':'timeout','web_code':None,'web_latency_ms':int((time.time()-t0)*1000),'web_checked_at':now()}
+    except Exception as e:
+        return {'web_status':'error','web_code':None,'web_error':str(e)[:120],'web_latency_ms':int((time.time()-t0)*1000),'web_checked_at':now()}
 def query(ip):
     g=gen(ip); d={'ip':ip,'generation':g or 1,'online':False}
     try:
@@ -110,9 +121,9 @@ def query(ip):
             try:
                 sett=requests.get(f'http://{ip}/settings',timeout=s.cfg['timeout'],auth=auth1()).json(); d['device_name']=sett.get('name') or d.get('model'); d['hostname']=((sett.get('device') or {}).get('hostname')) or d.get('hostname')
             except Exception: d['device_name']=d.get('model')
-        d.update(check_fw(ip,d)); return d
+        d.update(check_fw(ip,d)); d.update(check_web(ip)); return d
     except Exception as e:
-        d['error']=str(e); return d
+        d['error']=str(e); d.update(check_web(ip)); return d
 def refresh():
     s.refreshing=True
     with s.lock: ips=list(s.devices.keys())
@@ -153,7 +164,7 @@ def api_devices():
 @app.get('/api/summary')
 def api_summary():
     with s.lock: ds=list(s.devices.values())
-    return jsonify({'total':len(ds),'online':sum(1 for d in ds if d.get('online')),'offline':sum(1 for d in ds if not d.get('online')),'power':round(sum(d.get('total_power_w',0) or 0 for d in ds),2),'updates':sum(1 for d in ds if d.get('has_update') is True),'latest':sum(1 for d in ds if d.get('firmware_status')=='latest')})
+    return jsonify({'total':len(ds),'online':sum(1 for d in ds if d.get('online')),'offline':sum(1 for d in ds if not d.get('online')),'power':round(sum(d.get('total_power_w',0) or 0 for d in ds),2),'updates':sum(1 for d in ds if d.get('has_update') is True),'latest':sum(1 for d in ds if d.get('firmware_status')=='latest'),'web_ok':sum(1 for d in ds if d.get('web_status')=='ok'),'web_bad':sum(1 for d in ds if d.get('web_status') in ('error','timeout'))})
 @app.post('/api/refresh')
 def api_refresh(): threading.Thread(target=refresh,daemon=True).start(); return jsonify(ok=True)
 @app.post('/api/discover')
@@ -166,6 +177,11 @@ def api_fw_one(ip):
     fw=check_fw(ip,dev)
     with s.lock: s.devices.setdefault(ip,{'ip':ip}).update(fw)
     return jsonify(fw)
+@app.post('/api/device/<ip>/web/check')
+def api_web_one(ip):
+    w=check_web(ip)
+    with s.lock: s.devices.setdefault(ip,{'ip':ip}).update(w)
+    return jsonify(w)
 @app.post('/api/devices/add')
 def api_add():
     ip=(request.json or {}).get('ip','').strip()
@@ -313,6 +329,8 @@ html[data-theme="light"] .sw-row{background:rgba(15,23,42,.04)}
     <div class="stat"><span class="ico">⚡</span><div class="v" id="power">-</div><div class="l" data-i18n="total_power">Moc całkowita (W)</div></div>
     <div class="stat"><span class="ico">⬆</span><div class="v" id="updates">-</div><div class="l" data-i18n="updates">Aktualizacje</div></div>
     <div class="stat"><span class="ico">✅</span><div class="v" id="latest">-</div><div class="l" data-i18n="up_to_date">Aktualne</div></div>
+    <div class="stat"><span class="ico">🌐</span><div class="v" id="web_ok">-</div><div class="l" data-i18n="web_ok_stat">Web OK</div></div>
+    <div class="stat"><span class="ico">⚠️</span><div class="v" id="web_bad">-</div><div class="l" data-i18n="web_bad_stat">Web błąd</div></div>
   </div>
 
   <div class="bar">
@@ -340,8 +358,10 @@ const I18N={
      search_ph:'🔎 Szukaj po nazwie / IP / modelu...',ip_ph:'np. 192.168.1.50',loading:'Ładowanie...',
      last_refresh:'Ostatnie odświeżenie',refreshing_status:'⏳ odświeżanie...',
      model:'Model',hostname:'Hostname',fw:'Firmware',wifi:'WiFi',eth:'Ethernet',uptime:'Czas pracy',power:'Moc',channel:'Kanał',
-     check_fw:'⬆ Sprawdź FW',web:'🔗 Panel',no_devices:'Brak urządzeń pasujących do filtra',
+     check_fw:'⬆ Sprawdź FW',web:'🔗 Panel',check_web:'🌐 Test Web',no_devices:'Brak urządzeń pasujących do filtra',
      eth_na:'N/A',eth_none:'brak',eth_disc:'odłączony',eth_conn:'połączony',
+     web_label:'Web UI',web_ok:'OK',web_timeout:'timeout',web_error:'błąd',web_auth:'wymaga logowania',web_never:'nie sprawdzano',
+     web_ok_stat:'Web OK',web_bad_stat:'Web błąd',
      b_offline:'Offline',b_update:'⬆ Aktualizacja',b_latest:'Aktualne',b_online:'Online',
      msg_discovering:'Skanowanie sieci...',msg_refreshing:'Odświeżanie...',msg_checking_fw:'Sprawdzanie firmware...',
      msg_check_one:'Sprawdzam FW...',msg_on:'Włączanie...',msg_off:'Wyłączanie...',msg_add:'Dodano',msg_need_ip:'Podaj IP'},
@@ -350,8 +370,10 @@ const I18N={
      search_ph:'🔎 Search by name / IP / model...',ip_ph:'e.g. 192.168.1.50',loading:'Loading...',
      last_refresh:'Last refresh',refreshing_status:'⏳ refreshing...',
      model:'Model',hostname:'Hostname',fw:'Firmware',wifi:'WiFi',eth:'Ethernet',uptime:'Uptime',power:'Power',channel:'Channel',
-     check_fw:'⬆ Check FW',web:'🔗 Panel',no_devices:'No devices matching filter',
+     check_fw:'⬆ Check FW',web:'🔗 Panel',check_web:'🌐 Test Web',no_devices:'No devices matching filter',
      eth_na:'N/A',eth_none:'none',eth_disc:'disconnected',eth_conn:'connected',
+     web_label:'Web UI',web_ok:'OK',web_timeout:'timeout',web_error:'error',web_auth:'auth required',web_never:'not checked',
+     web_ok_stat:'Web OK',web_bad_stat:'Web error',
      b_offline:'Offline',b_update:'⬆ Update',b_latest:'Up to date',b_online:'Online',
      msg_discovering:'Scanning network...',msg_refreshing:'Refreshing...',msg_checking_fw:'Checking firmware...',
      msg_check_one:'Checking FW...',msg_on:'Turning on...',msg_off:'Turning off...',msg_add:'Added',msg_need_ip:'Enter IP'}
@@ -378,6 +400,7 @@ async function load(){
   $('total').textContent=sum.total??'-'; $('online').textContent=sum.online??'-';
   $('offline').textContent=sum.offline??'-'; $('power').textContent=(sum.power??0).toFixed(1);
   $('updates').textContent=sum.updates??'-'; $('latest').textContent=sum.latest??'-';
+  $('web_ok').textContent=sum.web_ok??'-'; $('web_bad').textContent=sum.web_bad??'-';
   const d=await j(api('api/devices')); DEVS=d.devices||[];
   $('foot').textContent=`${t('last_refresh')}: ${d.last_refresh||'-'} · ${t('fw')}: ${d.last_firmware_check||'-'}${d.refreshing?' · '+t('refreshing_status'):''}`;
   render();
@@ -390,6 +413,15 @@ function statusBadge(d){
 }
 function rssiIcon(r){if(!r) return '📶';if(r>-60)return '📶 ●●●';if(r>-75)return '📶 ●●○';return '📶 ●○○'}
 function ethStatus(d){if(d.generation&&d.generation<2) return `<span class="badge b-info">${t('eth_na')}</span>`;if(d.eth_supported===false) return `<span class="badge b-info">${t('eth_none')}</span>`;if(d.eth_connected) return `<span class="badge b-ok">🔌 ${d.eth_ip||t('eth_conn')}</span>`;if(d.eth_supported) return `<span class="badge b-bad">${t('eth_disc')}</span>`;return '<span class="badge b-info">-</span>'}
+function webStatus(d){
+  if(!d.web_status) return `<span class="badge b-info">${t('web_never')}</span>`;
+  const lat=d.web_latency_ms!=null?` · ${d.web_latency_ms} ms`:'';
+  const code=d.web_code?` (${d.web_code})`:'';
+  if(d.web_status==='ok'&&d.web_auth_required) return `<span class="badge b-warn">🔐 ${t('web_auth')}${lat}</span>`;
+  if(d.web_status==='ok') return `<span class="badge b-ok">✅ ${t('web_ok')}${code}${lat}</span>`;
+  if(d.web_status==='timeout') return `<span class="badge b-bad">⏱ ${t('web_timeout')}${lat}</span>`;
+  return `<span class="badge b-bad">❌ ${t('web_error')}${code}</span>`;
+}
 function uptime(s){if(!s) return '-';s=+s;const d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60);return (d?d+'d ':'')+(h?h+'h ':'')+m+'m'}
 function row(k,v){return `<div class="row"><span class="k">${k}</span><span class="vv">${v??'-'}</span></div>`}
 function matches(d,q){if(!q) return true;q=q.toLowerCase();return (d.ip||'').toLowerCase().includes(q)||(d.device_name||'').toLowerCase().includes(q)||(d.model||'').toLowerCase().includes(q)||(d.hostname||'').toLowerCase().includes(q)}
@@ -410,10 +442,12 @@ function render(){
         <div class="l-cell"><span class="lbl">${t('fw')}</span><span class="val">${fw}</span></div>
         <div class="l-cell"><span class="lbl">${t('wifi')}</span><span class="val">${d.wifi_rssi?d.wifi_rssi+' dBm':'-'}</span></div>
         <div class="l-cell"><span class="lbl">${t('eth')}</span><span class="val">${ethStatus(d)}</span></div>
+        <div class="l-cell"><span class="lbl">${t('web_label')}</span><span class="val">${webStatus(d)}</span></div>
         <div class="l-cell"><span class="lbl">${t('power')}</span><span class="val">${d.total_power_w!=null?d.total_power_w+' W':'-'}</span></div>
         <div class="l-cell"><span class="lbl">${t('uptime')}</span><span class="val">${uptime(d.uptime)}</span></div>
         <div class="actions">
           <button class="btn sm ghost" onclick="call('api/device/${d.ip}/firmware/check','msg_check_one')">⬆</button>
+          <button class="btn sm ghost" onclick="call('api/device/${d.ip}/web/check','msg_check_one')">🌐</button>
           <a class="btn sm ghost" href="http://${d.ip}" target="_blank" rel="noopener">🔗</a>
         </div>
       </div>`;
@@ -434,11 +468,13 @@ function render(){
       ${row(t('fw'),fw)}
       ${row(t('wifi'),d.wifi_rssi?`${rssiIcon(d.wifi_rssi)} ${d.wifi_rssi} dBm`:'-')}
       ${row(t('eth'), ethStatus(d))}
+      ${row(t('web_label'), webStatus(d))}
       ${row(t('uptime'),uptime(d.uptime))}
       ${row(t('power'),d.total_power_w!=null?d.total_power_w+' W':'-')}
       ${sw?`<div class="switches">${sw}</div>`:''}
       <div class="actions">
         <button class="btn sm ghost" onclick="call('api/device/${d.ip}/firmware/check','msg_check_one')">${t('check_fw')}</button>
+        <button class="btn sm ghost" onclick="call('api/device/${d.ip}/web/check','msg_check_one')">${t('check_web')}</button>
         <a class="btn sm ghost" href="http://${d.ip}" target="_blank" rel="noopener">${t('web')}</a>
       </div>
     </div>`;
