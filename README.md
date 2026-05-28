@@ -1,10 +1,7 @@
 # Shelly Dashboard Add-ons
 
-Repozytorium dodatku Home Assistant dla Shelly Dashboard.
+Dodaj repozytorium w Home Assistant:
 
-## Instalacja
-
-1. Home Assistant → Settings → Add-ons → Add-on Store
-2. Menu ⋮ → Repositories
-3. Dodaj URL repozytorium GitHub
-4. Zainstaluj dodatek **Shelly Dashboard**
+```text
+https://github.com/PabloKudlaty/home-assistant-shelly-dashboard-addon
+```

@@ -1,25 +1,17 @@
 configuration:
   devices:
     name: Devices
-    description: Comma-separated list of Shelly IP addresses.
   network:
     name: Network
-    description: Optional subnet scan range, e.g. 192.168.1.0/24.
   refresh:
     name: Refresh interval
-    description: Refresh interval in seconds.
   timeout:
-    name: HTTP timeout
-    description: Timeout for Shelly HTTP requests.
+    name: Timeout
   mdns_timeout:
     name: mDNS timeout
-    description: How long to wait for mDNS discovery.
   user:
-    name: Username
-    description: Username for Gen1 Basic Auth devices.
+    name: User
   password:
     name: Password
-    description: Password for Shelly devices.
   use_mdns:
     name: Use mDNS
-    description: Enable mDNS discovery.
