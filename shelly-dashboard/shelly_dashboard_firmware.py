@@ -1,269 +1,975 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import argparse, sys, time, threading, ipaddress
+"""
+Shelly Dashboard – refactored v2
+=================================
+Flask‑based web dashboard for discovering, monitoring, and controlling
+Shelly smart‑home devices on the local network.
+
+Changes from v1
+----------------
+* PEP 8 formatting & descriptive variable names
+* Proper thread‑safety (lock discipline, deep copies)
+* Per‐thread ``requests.Session`` for connection reuse
+* ``gen()`` now sends authentication credentials
+* Generation caching to avoid redundant HTTP roundtrips
+* ``query()`` split into ``_query_gen1`` / ``_query_gen2``
+* SSRF protection in ``api_add`` (IP validation)
+* CIDR scan guard (max 1024 hosts)
+* Health‑score constants extracted to module level
+* Structured logging instead of silent ``except: pass``
+* Optional API‑key authentication on mutating endpoints
+* Type hints and docstrings throughout
+"""
+
+from __future__ import annotations
+
+import argparse
+import copy
+import ipaddress
+import logging
+import threading
+import time
+from dataclasses import dataclass, field
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from functools import wraps
+from typing import Any, Dict, List, Optional, Tuple
+
 from flask import Flask, jsonify, request, render_template_string
 import requests
+import requests.auth
+
 try:
     from zeroconf import Zeroconf, ServiceBrowser, ServiceListener
-    HAS_ZEROCONF=True
+
+    HAS_ZEROCONF = True
 except Exception:
-    HAS_ZEROCONF=False
-app=Flask(__name__)
+    HAS_ZEROCONF = False
+
+# ── Logging ──────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(message)s",
+)
+log = logging.getLogger(__name__)
+
+# ── Flask app ────────────────────────────────────────────────────────
+app = Flask(__name__)
+
+# ── Health‑score constants ───────────────────────────────────────────
+HEALTH_WEIGHT_ONLINE = 35
+HEALTH_WEIGHT_WEB_OK = 15
+HEALTH_WEIGHT_WEB_AUTH = 10
+HEALTH_WEIGHT_FW_LATEST = 15
+HEALTH_WEIGHT_FW_UPDATE = 7
+HEALTH_WEIGHT_RSSI_GOOD = 10
+HEALTH_WEIGHT_RSSI_FAIR = 7
+HEALTH_WEIGHT_RSSI_WEAK = 3
+HEALTH_WEIGHT_CONNECTIVITY = 10
+HEALTH_WEIGHT_NO_ERROR = 5
+HEALTH_WEIGHT_UPTIME_OK = 5
+HEALTH_WEIGHT_LATENCY_FAST = 5
+HEALTH_WEIGHT_LATENCY_MED = 3
+HEALTH_WEIGHT_LATENCY_SLOW = 1
+
+RSSI_GOOD = -60
+RSSI_FAIR = -70
+RSSI_WEAK = -80
+
+UPTIME_MIN_SECONDS = 300
+LATENCY_FAST_MS = 500
+LATENCY_MED_MS = 1000
+LATENCY_SLOW_MS = 2000
+
+HEALTH_LEVEL_GOOD = 85
+HEALTH_LEVEL_WARN = 60
+
+MAX_SCAN_HOSTS = 1024
+
+# ── Global application state ────────────────────────────────────────
+
+@dataclass
+class Config:
+    """Runtime configuration populated from CLI arguments."""
+
+    timeout: float = 3.0
+    refresh: int = 15
+    mdns_timeout: float = 5.0
+    user: Optional[str] = None
+    password: Optional[str] = None
+    devices: List[str] = field(default_factory=list)
+    network: Optional[str] = None
+    use_mdns: bool = True
+    api_key: Optional[str] = None
+
+
 class State:
-    devices={}; lock=threading.Lock(); refreshing=False; fw=False; last_refresh=None; last_fw=None
-    cfg={'timeout':3,'refresh':15,'mdns_timeout':5,'user':None,'password':None,'devices':[],'network':None,'use_mdns':True}
-s=State()
-def now(): return datetime.now().isoformat(timespec='seconds')
-def auth1(): return (s.cfg['user'],s.cfg['password']) if s.cfg.get('user') and s.cfg.get('password') else None
-def auth2(): return requests.auth.HTTPDigestAuth('admin',s.cfg['password']) if s.cfg.get('password') else None
-def gen(ip):
-    try:
-        r=requests.get(f'http://{ip}/shelly',timeout=s.cfg['timeout'])
-        if r.status_code==200: return int(r.json().get('gen',1))
-    except Exception: pass
+    """Thread‑safe container for device data and status flags."""
+
+    def __init__(self) -> None:
+        self.devices: Dict[str, dict] = {}
+        self.lock: threading.Lock = threading.Lock()
+        self.refreshing: bool = False
+        self.firmware_checking: bool = False
+        self.last_refresh: Optional[str] = None
+        self.last_firmware_check: Optional[str] = None
+        self.cfg: Config = Config()
+
+
+state = State()
+
+# ── Per‑thread requests.Session ──────────────────────────────────────
+_thread_local = threading.local()
+
+
+def _get_session() -> requests.Session:
+    """Return a ``requests.Session`` local to the current thread."""
+    if not hasattr(_thread_local, "session"):
+        _thread_local.session = requests.Session()
+    return _thread_local.session
+
+
+# ── Utility helpers ──────────────────────────────────────────────────
+
+def _now() -> str:
+    """ISO‑8601 timestamp truncated to seconds."""
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def _auth_gen1() -> Optional[Tuple[str, str]]:
+    """HTTP Basic‑Auth tuple for Gen 1 devices (or ``None``)."""
+    if state.cfg.user and state.cfg.password:
+        return (state.cfg.user, state.cfg.password)
+    return None
+
+
+def _auth_gen2() -> Optional[requests.auth.HTTPDigestAuth]:
+    """HTTP Digest‑Auth object for Gen 2+ devices (or ``None``)."""
+    if state.cfg.password:
+        username = state.cfg.user or "admin"
+        return requests.auth.HTTPDigestAuth(username, state.cfg.password)
+    return None
+
+
+def _get_cached_generation(ip: str) -> int:
+    """Return generation from cache, or 0 if unknown."""
+    with state.lock:
+        return int(state.devices.get(ip, {}).get("generation", 0))
+
+
+def detect_generation(ip: str) -> int:
+    """
+    Detect the Shelly generation by querying ``/shelly``.
+
+    Returns 1 or 2+ on success, 0 on failure.  Uses cached value first.
+    """
+    cached = _get_cached_generation(ip)
+    if cached:
+        return cached
+
+    session = _get_session()
+    for auth in (_auth_gen1(), _auth_gen2(), None):
+        try:
+            resp = session.get(
+                f"http://{ip}/shelly",
+                timeout=state.cfg.timeout,
+                auth=auth,
+            )
+            if resp.status_code == 200:
+                generation = int(resp.json().get("gen", 1))
+                # cache it
+                with state.lock:
+                    state.devices.setdefault(ip, {"ip": ip})["generation"] = generation
+                return generation
+        except requests.RequestException as exc:
+            log.debug("gen() auth attempt failed for %s: %s", ip, exc)
+        except (ValueError, KeyError) as exc:
+            log.debug("gen() parse error for %s: %s", ip, exc)
     return 0
-class Listener(ServiceListener):
-    def __init__(self): self.found={}
-    def add_service(self,zc,t,n):
-        info=zc.get_service_info(t,n)
-        if info and info.parsed_scoped_addresses():
-            ip=info.parsed_scoped_addresses()[0]; self.found[ip]={'ip':ip}
-    def remove_service(self,zc,t,n): pass
-    def update_service(self,zc,t,n): pass
-def mdns():
-    if not HAS_ZEROCONF: return {}
-    z=Zeroconf(); l=Listener(); b=ServiceBrowser(z,'_shelly._tcp.local.',l)
-    time.sleep(s.cfg['mdns_timeout']); b.cancel(); z.close(); return l.found
-def scan(cidr):
-    out={}; timeout=min(float(s.cfg['timeout']),1.5)
-    def one(ip):
+
+
+# ── mDNS discovery ──────────────────────────────────────────────────
+
+if HAS_ZEROCONF:
+    class ShellyListener(ServiceListener):
+        """Zeroconf listener that collects Shelly device IPs."""
+
+        def __init__(self) -> None:
+            self.found: Dict[str, dict] = {}
+
+        def add_service(self, zc: Zeroconf, service_type: str, name: str) -> None:
+            info = zc.get_service_info(service_type, name)
+            if info and info.parsed_scoped_addresses():
+                ip = info.parsed_scoped_addresses()[0]
+                self.found[ip] = {"ip": ip}
+
+        def remove_service(self, zc: Zeroconf, service_type: str, name: str) -> None:
+            pass
+
+        def update_service(self, zc: Zeroconf, service_type: str, name: str) -> None:
+            pass
+
+
+def discover_mdns() -> Dict[str, dict]:
+    """Discover Shelly devices via mDNS.  Returns ``{}`` if unavailable."""
+    if not HAS_ZEROCONF:
+        return {}
+    zc = Zeroconf()
+    listener = ShellyListener()
+    browser = ServiceBrowser(zc, "_shelly._tcp.local.", listener)
+    time.sleep(state.cfg.mdns_timeout)
+    browser.cancel()
+    zc.close()
+    return listener.found
+
+
+# ── Network scanning ────────────────────────────────────────────────
+
+def scan_network(cidr: str) -> Dict[str, dict]:
+    """
+    Scan a CIDR range for Shelly devices.
+
+    Raises ``ValueError`` if the network contains more than ``MAX_SCAN_HOSTS`` hosts.
+    """
+    network = ipaddress.IPv4Network(cidr, strict=False)
+    if network.num_addresses > MAX_SCAN_HOSTS:
+        raise ValueError(
+            f"Network too large ({network.num_addresses} hosts, max {MAX_SCAN_HOSTS}). "
+            f"Use a smaller subnet."
+        )
+
+    found: Dict[str, dict] = {}
+    scan_timeout = min(float(state.cfg.timeout), 1.5)
+
+    def _probe(ip_str: str) -> Tuple[Optional[str], Optional[dict]]:
+        session = _get_session()
         try:
-            r=requests.get(f'http://{ip}/shelly',timeout=timeout)
-            if r.status_code==200: return ip,{'ip':ip}
-        except Exception: pass
-        return None,None
-    with ThreadPoolExecutor(max_workers=64) as ex:
-        futures=[ex.submit(one,str(ip)) for ip in ipaddress.IPv4Network(cidr,strict=False).hosts()]
-        for f in as_completed(futures):
-            ip,d=f.result()
-            if ip: out[ip]=d
-    return out
-def fw_status(cur=None,latest=None,err=None,has=None):
-    d={'firmware_current':cur,'firmware_latest':latest,'firmware_checked_at':now()}
-    if err: d.update({'firmware_status':'error','firmware_error':err,'has_update':None})
-    elif has is True or (latest and cur and str(latest)!=str(cur)): d.update({'firmware_status':'update_available','has_update':True})
-    elif has is False or cur: d.update({'firmware_status':'latest','has_update':False})
-    else: d.update({'firmware_status':'unknown','has_update':None})
-    return d
-def check_fw(ip,dev=None):
-    dev=dev or {}; g=int(dev.get('generation') or gen(ip) or 1); cur=dev.get('firmware_current') or dev.get('firmware')
-    if g>=2:
-        try:
-            r=requests.get(f'http://{ip}/rpc/Shelly.CheckForUpdate',timeout=s.cfg['timeout'],auth=auth2())
-            if r.status_code!=200: return fw_status(cur,err=f'HTTP {r.status_code}')
-            stable=(r.json().get('stable') or {}); latest=stable.get('version') or stable.get('ver') or stable.get('fw_id')
-            return fw_status(cur,latest,has=(True if latest and str(latest)!=str(cur) else False))
-        except Exception as e: return fw_status(cur,err=str(e))
+            resp = session.get(f"http://{ip_str}/shelly", timeout=scan_timeout)
+            if resp.status_code == 200:
+                return ip_str, {"ip": ip_str}
+        except requests.RequestException:
+            pass
+        return None, None
+
+    with ThreadPoolExecutor(max_workers=64) as executor:
+        futures = [
+            executor.submit(_probe, str(host))
+            for host in network.hosts()
+        ]
+        for future in as_completed(futures):
+            ip_str, device_stub = future.result()
+            if ip_str:
+                found[ip_str] = device_stub
+
+    return found
+
+
+# ── Firmware helpers ────────────────────────────────────────────────
+
+def _firmware_status(
+    current: Optional[str] = None,
+    latest: Optional[str] = None,
+    error: Optional[str] = None,
+    has_update: Optional[bool] = None,
+) -> dict:
+    """Build a normalised firmware‑status dict."""
+    result: Dict[str, Any] = {
+        "firmware_current": current,
+        "firmware_latest": latest,
+        "firmware_checked_at": _now(),
+    }
+    if error:
+        result.update({"firmware_status": "error", "firmware_error": error, "has_update": None})
+    elif has_update is True or (latest and current and str(latest) != str(current)):
+        result.update({"firmware_status": "update_available", "has_update": True})
+    elif has_update is False or current:
+        result.update({"firmware_status": "latest", "has_update": False})
     else:
-        latest=None; has=None
+        result.update({"firmware_status": "unknown", "has_update": None})
+    return result
+
+
+def check_firmware(ip: str, device: Optional[dict] = None) -> dict:
+    """Check whether a firmware update is available for *ip*."""
+    device = device or {}
+    generation = int(device.get("generation") or detect_generation(ip) or 1)
+    current_fw = device.get("firmware_current") or device.get("firmware")
+    session = _get_session()
+
+    if generation >= 2:
+        return _check_firmware_gen2(ip, current_fw, session)
+    return _check_firmware_gen1(ip, current_fw, session)
+
+
+def _check_firmware_gen2(ip: str, current_fw: Optional[str], session: requests.Session) -> dict:
+    """Check firmware for Gen 2+ devices via RPC."""
+    try:
+        resp = session.get(
+            f"http://{ip}/rpc/Shelly.CheckForUpdate",
+            timeout=state.cfg.timeout,
+            auth=_auth_gen2(),
+        )
+        if resp.status_code != 200:
+            return _firmware_status(current_fw, error=f"HTTP {resp.status_code}")
+        stable = resp.json().get("stable") or {}
+        latest = stable.get("version") or stable.get("ver") or stable.get("fw_id")
+        has = True if latest and str(latest) != str(current_fw) else False
+        return _firmware_status(current_fw, latest, has_update=has)
+    except requests.RequestException as exc:
+        return _firmware_status(current_fw, error=str(exc))
+    except (ValueError, KeyError) as exc:
+        return _firmware_status(current_fw, error=str(exc))
+
+
+def _check_firmware_gen1(ip: str, current_fw: Optional[str], session: requests.Session) -> dict:
+    """Check firmware for Gen 1 devices via ``/ota`` and ``/status``."""
+    latest: Optional[str] = None
+    has_update: Optional[bool] = None
+    cur = current_fw
+    try:
+        # trigger update check
         try:
-            try: requests.get(f'http://{ip}/ota/check',timeout=s.cfg['timeout'],auth=auth1())
-            except Exception: pass
-            for url in (f'http://{ip}/ota',f'http://{ip}/status'):
-                try:
-                    r=requests.get(url,timeout=s.cfg['timeout'],auth=auth1())
-                    if r.status_code==200:
-                        data=r.json(); upd=data.get('update',data) if isinstance(data,dict) else {}
-                        latest=upd.get('new_version') or upd.get('version') or latest
-                        cur=upd.get('old_version') or upd.get('current_version') or cur
-                        if 'has_update' in upd: has=bool(upd.get('has_update'))
-                except Exception: pass
-            return fw_status(cur,latest,has=has)
-        except Exception as e: return fw_status(cur,err=str(e))
-def compute_health(d):
-    score=0; issues=[]
-    if d.get('online'): score+=35
-    else: issues.append('offline')
-    ws=d.get('web_status')
-    if ws=='ok' and not d.get('web_auth_required'): score+=15
-    elif ws=='ok' and d.get('web_auth_required'): score+=10; issues.append('web_auth')
-    elif ws=='timeout': issues.append('web_timeout')
-    elif ws=='error': issues.append('web_error')
-    elif ws is None: pass
-    fs=d.get('firmware_status')
-    if fs=='latest': score+=15
-    elif fs=='update_available': score+=7; issues.append('fw_update')
-    elif fs=='error': issues.append('fw_check_error')
-    rssi=d.get('wifi_rssi')
-    if rssi is None: pass
-    elif rssi>-60: score+=10
-    elif rssi>-70: score+=7
-    elif rssi>-80: score+=3; issues.append('wifi_weak')
-    else: issues.append('wifi_poor')
-    wifi_ok=rssi is not None
-    eth_ok=bool(d.get('eth_connected'))
-    if wifi_ok or eth_ok: score+=10
-    else: issues.append('no_connectivity')
-    if d.get('error'): issues.append('api_error')
-    else: score+=5
-    up=d.get('uptime')
-    if up is None: pass
-    elif up>=300: score+=5
-    else: issues.append('recent_reboot')
-    lat=d.get('web_latency_ms')
-    if lat is None: pass
-    elif lat<500: score+=5
-    elif lat<1000: score+=3
-    elif lat<2000: score+=1; issues.append('web_slow')
-    else: issues.append('web_slow')
-    score=max(0,min(100,score))
-    level='good' if score>=85 else ('warn' if score>=60 else 'bad')
-    return {'health_score':score,'health_level':level,'health_issues':issues}
-def check_web(ip):
-    t0=time.time()
-    try:
-        r=requests.get(f'http://{ip}/',timeout=s.cfg['timeout'],auth=auth1(),allow_redirects=True)
-        ms=int((time.time()-t0)*1000)
-        ok=200<=r.status_code<400 or r.status_code==401
-        return {'web_status':'ok' if ok else 'error','web_code':r.status_code,'web_latency_ms':ms,'web_auth_required':r.status_code==401,'web_checked_at':now()}
-    except requests.exceptions.Timeout:
-        return {'web_status':'timeout','web_code':None,'web_latency_ms':int((time.time()-t0)*1000),'web_checked_at':now()}
-    except Exception as e:
-        return {'web_status':'error','web_code':None,'web_error':str(e)[:120],'web_latency_ms':int((time.time()-t0)*1000),'web_checked_at':now()}
-def query(ip):
-    g=gen(ip); d={'ip':ip,'generation':g or 1,'online':False}
-    try:
-        if g>=2:
-            info=requests.get(f'http://{ip}/rpc/Shelly.GetDeviceInfo',timeout=s.cfg['timeout'],auth=auth2()).json()
-            d.update({'online':True,'model':info.get('model') or info.get('app'),'firmware':info.get('ver') or info.get('fw_id'),'firmware_current':info.get('ver') or info.get('fw_id'),'generation':info.get('gen',2),'hostname':info.get('id') or info.get('hostname')})
+            session.get(
+                f"http://{ip}/ota/check",
+                timeout=state.cfg.timeout,
+                auth=_auth_gen1(),
+            )
+        except requests.RequestException:
+            pass
+
+        for url in (f"http://{ip}/ota", f"http://{ip}/status"):
             try:
-                st=requests.get(f'http://{ip}/rpc/Shelly.GetStatus',timeout=s.cfg['timeout'],auth=auth2()).json(); w=st.get('wifi',{}); sys=st.get('sys',{}); eth=st.get('eth') or {}
-                d.update({'wifi_rssi':w.get('rssi'),'wifi_ssid':w.get('ssid'),'uptime':sys.get('uptime'),'switches':[],'total_power_w':0,'eth_ip':eth.get('ip'),'eth_connected':bool(eth.get('ip')),'eth_supported':'eth' in st})
-                for k,v in st.items():
-                    if k.startswith('switch:'):
-                        p=v.get('apower',0) or 0; d['switches'].append({'id':k.split(':')[1],'is_on':v.get('output',False),'power_w':p}); d['total_power_w']+=p
-                d['total_power_w']=round(d['total_power_w'],2)
-            except Exception: pass
-            try:
-                cfg=requests.get(f'http://{ip}/rpc/Shelly.GetConfig',timeout=s.cfg['timeout'],auth=auth2()).json(); dev=((cfg.get('sys')or{}).get('device')or{}); d['device_name']=dev.get('name'); d['hostname']=d.get('hostname') or dev.get('hostname') or dev.get('mac')
-                names={}
-                for k,v in cfg.items():
-                    if k.startswith(('switch:','input:','cover:','light:')) and isinstance(v,dict): names[k]=v.get('name')
-                for swx in d.get('switches',[]):
-                    nm=names.get(f"switch:{swx['id']}")
-                    if nm: swx['name']=nm
-                d['channel_names']={k:v for k,v in names.items() if v}
-            except Exception: pass
-            if not d.get('device_name'):
-                try:
-                    sc=requests.get(f'http://{ip}/rpc/Sys.GetConfig',timeout=s.cfg['timeout'],auth=auth2()).json(); d['device_name']=((sc.get('device') or {}).get('name'))
-                except Exception: pass
-            if not d.get('device_name'): d['device_name']=d.get('hostname') or d.get('model')
+                resp = session.get(url, timeout=state.cfg.timeout, auth=_auth_gen1())
+                if resp.status_code == 200:
+                    data = resp.json()
+                    upd = data.get("update", data) if isinstance(data, dict) else {}
+                    latest = upd.get("new_version") or upd.get("version") or latest
+                    cur = upd.get("old_version") or upd.get("current_version") or cur
+                    if "has_update" in upd:
+                        has_update = bool(upd["has_update"])
+            except (requests.RequestException, ValueError, KeyError) as exc:
+                log.debug("Gen1 firmware check url %s failed: %s", url, exc)
+
+        return _firmware_status(cur, latest, has_update=has_update)
+    except Exception as exc:
+        log.warning("Unexpected error during Gen1 fw check for %s: %s", ip, exc)
+        return _firmware_status(cur, error=str(exc))
+
+
+# ── Health scoring ──────────────────────────────────────────────────
+
+def compute_health(device: dict) -> dict:
+    """
+    Return a health‑score dict (0–100) with a level and issue list.
+
+    The score is an additive composite of several weighted factors.
+    """
+    score = 0
+    issues: List[str] = []
+
+    # Online
+    if device.get("online"):
+        score += HEALTH_WEIGHT_ONLINE
+    else:
+        issues.append("offline")
+
+    # Web UI
+    web = device.get("web_status")
+    if web == "ok" and not device.get("web_auth_required"):
+        score += HEALTH_WEIGHT_WEB_OK
+    elif web == "ok" and device.get("web_auth_required"):
+        score += HEALTH_WEIGHT_WEB_AUTH
+        issues.append("web_auth")
+    elif web == "timeout":
+        issues.append("web_timeout")
+    elif web == "error":
+        issues.append("web_error")
+
+    # Firmware
+    fw_status = device.get("firmware_status")
+    if fw_status == "latest":
+        score += HEALTH_WEIGHT_FW_LATEST
+    elif fw_status == "update_available":
+        score += HEALTH_WEIGHT_FW_UPDATE
+        issues.append("fw_update")
+    elif fw_status == "error":
+        issues.append("fw_check_error")
+
+    # WiFi RSSI
+    rssi = device.get("wifi_rssi")
+    if rssi is not None:
+        if rssi > RSSI_GOOD:
+            score += HEALTH_WEIGHT_RSSI_GOOD
+        elif rssi > RSSI_FAIR:
+            score += HEALTH_WEIGHT_RSSI_FAIR
+        elif rssi > RSSI_WEAK:
+            score += HEALTH_WEIGHT_RSSI_WEAK
+            issues.append("wifi_weak")
         else:
-            info=requests.get(f'http://{ip}/shelly',timeout=s.cfg['timeout'],auth=auth1()).json()
-            d.update({'online':True,'model':info.get('type'),'firmware':info.get('fw'),'firmware_current':info.get('fw'),'hostname':info.get('hostname') or info.get('mac')})
-            try:
-                st=requests.get(f'http://{ip}/status',timeout=s.cfg['timeout'],auth=auth1()).json(); w=st.get('wifi_sta',{})
-                d.update({'wifi_rssi':w.get('rssi'),'switches':[{'id':i,'is_on':x.get('ison',False)} for i,x in enumerate(st.get('relays',[]))]})
-                m=st.get('meters',[]); d['total_power_w']=round(sum(x.get('power',0) or 0 for x in m),2)
-            except Exception: pass
-            try:
-                sett=requests.get(f'http://{ip}/settings',timeout=s.cfg['timeout'],auth=auth1()).json(); d['device_name']=sett.get('name'); d['hostname']=((sett.get('device') or {}).get('hostname')) or d.get('hostname')
-                rel_names={i:(r.get('name') if isinstance(r,dict) else None) for i,r in enumerate(sett.get('relays') or [])}
-                for swx in d.get('switches',[]):
-                    nm=rel_names.get(int(swx['id'])) if str(swx['id']).isdigit() else None
-                    if nm: swx['name']=nm
-                d['channel_names']={f'switch:{i}':n for i,n in rel_names.items() if n}
-            except Exception: pass
-            if not d.get('device_name'): d['device_name']=d.get('hostname') or d.get('model')
-        d.update(check_fw(ip,d)); d.update(check_web(ip)); d.update(compute_health(d)); return d
-    except Exception as e:
-        d['error']=str(e); d.update(check_web(ip)); d.update(compute_health(d)); return d
-def refresh():
-    s.refreshing=True
-    with s.lock: ips=list(s.devices.keys())
-    res={}
-    with ThreadPoolExecutor(max_workers=24) as ex:
-        for f in as_completed([ex.submit(query,ip) for ip in ips]):
-            q=f.result(); res[q['ip']]=q
-    with s.lock: s.devices.update(res); s.last_refresh=now()
-    s.refreshing=False
-def discover():
-    found={ip:{'ip':ip} for ip in s.cfg['devices']}
-    if s.cfg['use_mdns']: found.update(mdns())
-    if s.cfg['network']: found.update(scan(s.cfg['network']))
-    with s.lock:
-        for ip in found: s.devices.setdefault(ip,{'ip':ip,'online':False,'error':'waiting'})
-    refresh()
-def fw_all():
-    s.fw=True
-    with s.lock: snap=dict(s.devices)
-    with ThreadPoolExecutor(max_workers=24) as ex:
-        futs={ex.submit(check_fw,ip,d):ip for ip,d in snap.items()}
-        for f in as_completed(futs):
-            ip=futs[f]
-            with s.lock:
-                s.devices.setdefault(ip,{'ip':ip}).update(f.result())
-                s.devices[ip].update(compute_health(s.devices[ip]))
-    s.last_fw=now(); s.fw=False
-def relay(ip,rid,act):
+            issues.append("wifi_poor")
+
+    # Connectivity (WiFi or Ethernet)
+    has_wifi = rssi is not None
+    has_eth = bool(device.get("eth_connected"))
+    if has_wifi or has_eth:
+        score += HEALTH_WEIGHT_CONNECTIVITY
+    else:
+        issues.append("no_connectivity")
+
+    # API errors
+    if device.get("error"):
+        issues.append("api_error")
+    else:
+        score += HEALTH_WEIGHT_NO_ERROR
+
+    # Uptime
+    uptime_val = device.get("uptime")
+    if uptime_val is not None:
+        if uptime_val >= UPTIME_MIN_SECONDS:
+            score += HEALTH_WEIGHT_UPTIME_OK
+        else:
+            issues.append("recent_reboot")
+
+    # Web latency
+    latency = device.get("web_latency_ms")
+    if latency is not None:
+        if latency < LATENCY_FAST_MS:
+            score += HEALTH_WEIGHT_LATENCY_FAST
+        elif latency < LATENCY_MED_MS:
+            score += HEALTH_WEIGHT_LATENCY_MED
+        elif latency < LATENCY_SLOW_MS:
+            score += HEALTH_WEIGHT_LATENCY_SLOW
+            issues.append("web_slow")
+        else:
+            issues.append("web_slow")
+
+    score = max(0, min(100, score))
+    if score >= HEALTH_LEVEL_GOOD:
+        level = "good"
+    elif score >= HEALTH_LEVEL_WARN:
+        level = "warn"
+    else:
+        level = "bad"
+
+    return {"health_score": score, "health_level": level, "health_issues": issues}
+
+
+# ── Web‑UI check ────────────────────────────────────────────────────
+
+def check_web(ip: str) -> dict:
+    """Probe the device's Web UI and return status, latency, auth info."""
+    session = _get_session()
+    t0 = time.time()
     try:
-        if gen(ip)>=2:
-            url=f"http://{ip}/rpc/Switch.Set?id={rid}&on={'true' if act=='on' else 'false'}" if act!='toggle' else f'http://{ip}/rpc/Switch.Toggle?id={rid}'
-            r=requests.get(url,timeout=s.cfg['timeout'],auth=auth2())
-        else: r=requests.get(f'http://{ip}/relay/{rid}?turn={act}',timeout=s.cfg['timeout'],auth=auth1())
-        return r.status_code==200,r.text
-    except Exception as e: return False,str(e)
-@app.route('/')
-def home(): return render_template_string(HTML,refresh=s.cfg['refresh'])
-@app.get('/api/devices')
+        resp = session.get(
+            f"http://{ip}/",
+            timeout=state.cfg.timeout,
+            auth=_auth_gen1(),
+            allow_redirects=True,
+        )
+        latency_ms = int((time.time() - t0) * 1000)
+        ok = 200 <= resp.status_code < 400 or resp.status_code == 401
+        return {
+            "web_status": "ok" if ok else "error",
+            "web_code": resp.status_code,
+            "web_latency_ms": latency_ms,
+            "web_auth_required": resp.status_code == 401,
+            "web_checked_at": _now(),
+        }
+    except requests.exceptions.Timeout:
+        return {
+            "web_status": "timeout",
+            "web_code": None,
+            "web_latency_ms": int((time.time() - t0) * 1000),
+            "web_checked_at": _now(),
+        }
+    except requests.RequestException as exc:
+        return {
+            "web_status": "error",
+            "web_code": None,
+            "web_error": str(exc)[:120],
+            "web_latency_ms": int((time.time() - t0) * 1000),
+            "web_checked_at": _now(),
+        }
+
+
+# ── Device query (split by generation) ──────────────────────────────
+
+def query_device(ip: str) -> dict:
+    """
+    Query a single Shelly device and return a complete status dict.
+
+    Dispatches to ``_query_gen1`` or ``_query_gen2`` based on detected
+    generation, then appends firmware, web, and health data.
+    """
+    generation = detect_generation(ip)
+    device: Dict[str, Any] = {"ip": ip, "generation": generation or 1, "online": False}
+
+    try:
+        if generation >= 2:
+            device = _query_gen2(ip, device)
+        else:
+            device = _query_gen1(ip, device)
+
+        device.update(check_firmware(ip, device))
+        device.update(check_web(ip))
+        device.update(compute_health(device))
+        return device
+
+    except Exception as exc:
+        log.warning("query_device(%s) failed: %s", ip, exc)
+        device["error"] = str(exc)
+        device.update(check_web(ip))
+        device.update(compute_health(device))
+        return device
+
+
+def _query_gen2(ip: str, device: dict) -> dict:
+    """Populate *device* dict using Gen 2+ RPC endpoints."""
+    session = _get_session()
+    auth = _auth_gen2()
+
+    # ── Device info ──────────────────────────────────────────────────
+    info = session.get(
+        f"http://{ip}/rpc/Shelly.GetDeviceInfo",
+        timeout=state.cfg.timeout,
+        auth=auth,
+    ).json()
+    device.update({
+        "online": True,
+        "model": info.get("model") or info.get("app"),
+        "firmware": info.get("ver") or info.get("fw_id"),
+        "firmware_current": info.get("ver") or info.get("fw_id"),
+        "generation": info.get("gen", 2),
+        "hostname": info.get("id") or info.get("hostname"),
+    })
+
+    # ── Status (WiFi, switches, eth) ─────────────────────────────────
+    try:
+        status = session.get(
+            f"http://{ip}/rpc/Shelly.GetStatus",
+            timeout=state.cfg.timeout,
+            auth=auth,
+        ).json()
+        wifi = status.get("wifi", {})
+        sys_info = status.get("sys", {})
+        eth = status.get("eth") or {}
+
+        device.update({
+            "wifi_rssi": wifi.get("rssi"),
+            "wifi_ssid": wifi.get("ssid"),
+            "uptime": sys_info.get("uptime"),
+            "switches": [],
+            "total_power_w": 0,
+            "eth_ip": eth.get("ip"),
+            "eth_connected": bool(eth.get("ip")),
+            "eth_supported": "eth" in status,
+        })
+        for key, val in status.items():
+            if key.startswith("switch:"):
+                power = val.get("apower", 0) or 0
+                device["switches"].append({
+                    "id": key.split(":")[1],
+                    "is_on": val.get("output", False),
+                    "power_w": power,
+                })
+                device["total_power_w"] += power
+        device["total_power_w"] = round(device["total_power_w"], 2)
+    except (requests.RequestException, ValueError, KeyError) as exc:
+        log.debug("Gen2 status for %s: %s", ip, exc)
+
+    # ── Config (device name, channel names) ──────────────────────────
+    try:
+        cfg = session.get(
+            f"http://{ip}/rpc/Shelly.GetConfig",
+            timeout=state.cfg.timeout,
+            auth=auth,
+        ).json()
+        dev_section = ((cfg.get("sys") or {}).get("device") or {})
+        device["device_name"] = dev_section.get("name")
+        device["hostname"] = device.get("hostname") or dev_section.get("hostname") or dev_section.get("mac")
+
+        channel_names: Dict[str, Optional[str]] = {}
+        for key, val in cfg.items():
+            if key.startswith(("switch:", "input:", "cover:", "light:")) and isinstance(val, dict):
+                channel_names[key] = val.get("name")
+
+        for switch in device.get("switches", []):
+            name = channel_names.get(f"switch:{switch['id']}")
+            if name:
+                switch["name"] = name
+
+        device["channel_names"] = {k: v for k, v in channel_names.items() if v}
+    except (requests.RequestException, ValueError, KeyError) as exc:
+        log.debug("Gen2 config for %s: %s", ip, exc)
+
+    # ── Fallback device name ─────────────────────────────────────────
+    if not device.get("device_name"):
+        try:
+            sys_cfg = session.get(
+                f"http://{ip}/rpc/Sys.GetConfig",
+                timeout=state.cfg.timeout,
+                auth=auth,
+            ).json()
+            device["device_name"] = ((sys_cfg.get("device") or {}).get("name"))
+        except (requests.RequestException, ValueError, KeyError) as exc:
+            log.debug("Gen2 Sys.GetConfig fallback for %s: %s", ip, exc)
+
+    if not device.get("device_name"):
+        device["device_name"] = device.get("hostname") or device.get("model")
+
+    return device
+
+
+def _query_gen1(ip: str, device: dict) -> dict:
+    """Populate *device* dict using Gen 1 REST endpoints."""
+    session = _get_session()
+    auth = _auth_gen1()
+
+    # ── /shelly ──────────────────────────────────────────────────────
+    info = session.get(
+        f"http://{ip}/shelly",
+        timeout=state.cfg.timeout,
+        auth=auth,
+    ).json()
+    device.update({
+        "online": True,
+        "model": info.get("type"),
+        "firmware": info.get("fw"),
+        "firmware_current": info.get("fw"),
+        "hostname": info.get("hostname") or info.get("mac"),
+    })
+
+    # ── /status ──────────────────────────────────────────────────────
+    try:
+        status = session.get(
+            f"http://{ip}/status",
+            timeout=state.cfg.timeout,
+            auth=auth,
+        ).json()
+        wifi = status.get("wifi_sta", {})
+        device.update({
+            "wifi_rssi": wifi.get("rssi"),
+            "switches": [
+                {"id": idx, "is_on": relay.get("ison", False)}
+                for idx, relay in enumerate(status.get("relays", []))
+            ],
+        })
+        meters = status.get("meters", [])
+        device["total_power_w"] = round(
+            sum(m.get("power", 0) or 0 for m in meters), 2
+        )
+    except (requests.RequestException, ValueError, KeyError) as exc:
+        log.debug("Gen1 status for %s: %s", ip, exc)
+
+    # ── /settings ────────────────────────────────────────────────────
+    try:
+        settings = session.get(
+            f"http://{ip}/settings",
+            timeout=state.cfg.timeout,
+            auth=auth,
+        ).json()
+        device["device_name"] = settings.get("name")
+        device["hostname"] = (
+            ((settings.get("device") or {}).get("hostname")) or device.get("hostname")
+        )
+        relay_names: Dict[int, Optional[str]] = {
+            idx: (r.get("name") if isinstance(r, dict) else None)
+            for idx, r in enumerate(settings.get("relays") or [])
+        }
+        for switch in device.get("switches", []):
+            sid = switch["id"]
+            name = relay_names.get(int(sid)) if str(sid).isdigit() else None
+            if name:
+                switch["name"] = name
+        device["channel_names"] = {
+            f"switch:{idx}": name for idx, name in relay_names.items() if name
+        }
+    except (requests.RequestException, ValueError, KeyError) as exc:
+        log.debug("Gen1 settings for %s: %s", ip, exc)
+
+    if not device.get("device_name"):
+        device["device_name"] = device.get("hostname") or device.get("model")
+
+    return device
+
+
+# ── Batch operations ────────────────────────────────────────────────
+
+def refresh_devices() -> None:
+    """Re‑query all known devices."""
+    with state.lock:
+        state.refreshing = True
+        ips = list(state.devices.keys())
+
+    results: Dict[str, dict] = {}
+    with ThreadPoolExecutor(max_workers=24) as executor:
+        futures = [executor.submit(query_device, ip) for ip in ips]
+        for future in as_completed(futures):
+            device = future.result()
+            results[device["ip"]] = device
+
+    with state.lock:
+        state.devices.update(results)
+        state.last_refresh = _now()
+        state.refreshing = False
+
+
+def discover_devices() -> None:
+    """Discover new Shelly devices, then refresh all."""
+    found: Dict[str, dict] = {
+        ip: {"ip": ip} for ip in state.cfg.devices
+    }
+    if state.cfg.use_mdns:
+        found.update(discover_mdns())
+    if state.cfg.network:
+        try:
+            found.update(scan_network(state.cfg.network))
+        except ValueError as exc:
+            log.error("Network scan aborted: %s", exc)
+
+    with state.lock:
+        for ip in found:
+            state.devices.setdefault(ip, {"ip": ip, "online": False, "error": "waiting"})
+
+    refresh_devices()
+
+
+def check_all_firmware() -> None:
+    """Run a firmware check across all known devices."""
+    with state.lock:
+        state.firmware_checking = True
+        snapshot = copy.deepcopy(state.devices)
+
+    with ThreadPoolExecutor(max_workers=24) as executor:
+        future_to_ip = {
+            executor.submit(check_firmware, ip, dev): ip
+            for ip, dev in snapshot.items()
+        }
+        for future in as_completed(future_to_ip):
+            ip = future_to_ip[future]
+            fw_result = future.result()
+            with state.lock:
+                state.devices.setdefault(ip, {"ip": ip}).update(fw_result)
+                state.devices[ip].update(compute_health(state.devices[ip]))
+
+    with state.lock:
+        state.last_firmware_check = _now()
+        state.firmware_checking = False
+
+
+# ── Relay control ────────────────────────────────────────────────────
+
+def toggle_relay(ip: str, relay_id: str, action: str) -> Tuple[bool, str]:
+    """Send an on/off/toggle command to a relay."""
+    session = _get_session()
+    generation = detect_generation(ip)
+    try:
+        if generation >= 2:
+            if action == "toggle":
+                url = f"http://{ip}/rpc/Switch.Toggle?id={relay_id}"
+            else:
+                on_value = "true" if action == "on" else "false"
+                url = f"http://{ip}/rpc/Switch.Set?id={relay_id}&on={on_value}"
+            resp = session.get(url, timeout=state.cfg.timeout, auth=_auth_gen2())
+        else:
+            resp = session.get(
+                f"http://{ip}/relay/{relay_id}?turn={action}",
+                timeout=state.cfg.timeout,
+                auth=_auth_gen1(),
+            )
+        return resp.status_code == 200, resp.text
+    except requests.RequestException as exc:
+        return False, str(exc)
+
+
+# ── Optional API‑key authentication decorator ───────────────────────
+
+def require_api_key(func):
+    """Decorator: reject POST requests when an API key is configured but missing/wrong."""
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        if state.cfg.api_key:
+            provided = request.headers.get("X-API-Key", "")
+            if provided != state.cfg.api_key:
+                return jsonify(error="unauthorized"), 401
+        return func(*args, **kwargs)
+
+    return wrapper
+
+
+# ── IP validation helper ────────────────────────────────────────────
+
+def _validate_ip(ip_str: str) -> Tuple[bool, str]:
+    """Return ``(True, '')`` if *ip_str* is a safe unicast IPv4 address."""
+    try:
+        addr = ipaddress.IPv4Address(ip_str)
+    except (ipaddress.AddressValueError, ValueError):
+        return False, "invalid IPv4 address"
+    if addr.is_loopback:
+        return False, "loopback address not allowed"
+    if addr.is_link_local:
+        return False, "link‑local address not allowed"
+    if addr.is_multicast:
+        return False, "multicast address not allowed"
+    if addr.is_reserved:
+        return False, "reserved address not allowed"
+    return True, ""
+
+
+# ── Flask routes ─────────────────────────────────────────────────────
+
+@app.route("/")
+def home():
+    """Serve the single‑page dashboard."""
+    return render_template_string(HTML, refresh=state.cfg.refresh)
+
+
+@app.get("/api/devices")
 def api_devices():
-    with s.lock: return jsonify({'devices':list(s.devices.values()),'last_refresh':s.last_refresh,'last_firmware_check':s.last_fw,'refreshing':s.refreshing,'firmware_checking':s.fw})
-@app.get('/api/summary')
+    """Return the full device list and status flags."""
+    with state.lock:
+        devices_copy = copy.deepcopy(list(state.devices.values()))
+        return jsonify({
+            "devices": devices_copy,
+            "last_refresh": state.last_refresh,
+            "last_firmware_check": state.last_firmware_check,
+            "refreshing": state.refreshing,
+            "firmware_checking": state.firmware_checking,
+        })
+
+
+@app.get("/api/summary")
 def api_summary():
-    with s.lock: ds=list(s.devices.values())
-    return jsonify({'total':len(ds),'online':sum(1 for d in ds if d.get('online')),'offline':sum(1 for d in ds if not d.get('online')),'power':round(sum(d.get('total_power_w',0) or 0 for d in ds),2),'updates':sum(1 for d in ds if d.get('has_update') is True),'latest':sum(1 for d in ds if d.get('firmware_status')=='latest'),'web_ok':sum(1 for d in ds if d.get('web_status')=='ok'),'web_bad':sum(1 for d in ds if d.get('web_status') in ('error','timeout')),'health_avg':round(sum(d.get('health_score',0) or 0 for d in ds)/len(ds),1) if ds else 0,'health_issues':sum(1 for d in ds if d.get('health_level')!='good')})
-@app.post('/api/refresh')
-def api_refresh(): threading.Thread(target=refresh,daemon=True).start(); return jsonify(ok=True)
-@app.post('/api/discover')
-def api_discover(): threading.Thread(target=discover,daemon=True).start(); return jsonify(ok=True)
-@app.post('/api/firmware/check')
-def api_fw_all(): threading.Thread(target=fw_all,daemon=True).start(); return jsonify(ok=True)
-@app.post('/api/device/<ip>/firmware/check')
-def api_fw_one(ip):
-    with s.lock: dev=s.devices.get(ip,{'ip':ip})
-    fw=check_fw(ip,dev)
-    with s.lock:
-        s.devices.setdefault(ip,{'ip':ip}).update(fw)
-        s.devices[ip].update(compute_health(s.devices[ip]))
-    return jsonify(fw)
-@app.post('/api/device/<ip>/web/check')
-def api_web_one(ip):
-    w=check_web(ip)
-    with s.lock:
-        s.devices.setdefault(ip,{'ip':ip}).update(w)
-        s.devices[ip].update(compute_health(s.devices[ip]))
-    return jsonify(w)
-@app.post('/api/devices/add')
-def api_add():
-    ip=(request.json or {}).get('ip','').strip()
-    if not ip: return jsonify(error='missing ip'),400
-    with s.lock: s.devices[ip]={'ip':ip,'online':False,'error':'waiting'}
-    threading.Thread(target=lambda: s.devices.update({ip:query(ip)}),daemon=True).start(); return jsonify(ok=True)
-@app.post('/api/device/<ip>/relay/<rid>/<act>')
-def api_relay(ip,rid,act):
-    ok,msg=relay(ip,rid,act)
+    """Return aggregate statistics about all devices."""
+    with state.lock:
+        devices = copy.deepcopy(list(state.devices.values()))
+
+    total = len(devices)
+    online = sum(1 for d in devices if d.get("online"))
+    return jsonify({
+        "total": total,
+        "online": online,
+        "offline": total - online,
+        "power": round(sum(d.get("total_power_w", 0) or 0 for d in devices), 2),
+        "updates": sum(1 for d in devices if d.get("has_update") is True),
+        "latest": sum(1 for d in devices if d.get("firmware_status") == "latest"),
+        "web_ok": sum(1 for d in devices if d.get("web_status") == "ok"),
+        "web_bad": sum(1 for d in devices if d.get("web_status") in ("error", "timeout")),
+        "health_avg": round(
+            sum(d.get("health_score", 0) or 0 for d in devices) / total, 1
+        ) if total else 0,
+        "health_issues": sum(1 for d in devices if d.get("health_level") != "good"),
+    })
+
+
+@app.post("/api/refresh")
+@require_api_key
+def api_refresh():
+    """Trigger a background refresh of all devices."""
+    threading.Thread(target=refresh_devices, daemon=True).start()
+    return jsonify(ok=True)
+
+
+@app.post("/api/discover")
+@require_api_key
+def api_discover():
+    """Trigger background device discovery + refresh."""
+    threading.Thread(target=discover_devices, daemon=True).start()
+    return jsonify(ok=True)
+
+
+@app.post("/api/firmware/check")
+@require_api_key
+def api_firmware_check_all():
+    """Trigger a background firmware check for all devices."""
+    threading.Thread(target=check_all_firmware, daemon=True).start()
+    return jsonify(ok=True)
+
+
+@app.post("/api/device/<ip>/firmware/check")
+@require_api_key
+def api_firmware_check_one(ip: str):
+    """Check firmware for a single device (synchronous)."""
+    with state.lock:
+        device = copy.deepcopy(state.devices.get(ip, {"ip": ip}))
+
+    fw_result = check_firmware(ip, device)
+
+    with state.lock:
+        state.devices.setdefault(ip, {"ip": ip}).update(fw_result)
+        state.devices[ip].update(compute_health(state.devices[ip]))
+
+    return jsonify(fw_result)
+
+
+@app.post("/api/device/<ip>/web/check")
+@require_api_key
+def api_web_check_one(ip: str):
+    """Check web UI reachability for a single device (synchronous)."""
+    web_result = check_web(ip)
+
+    with state.lock:
+        state.devices.setdefault(ip, {"ip": ip}).update(web_result)
+        state.devices[ip].update(compute_health(state.devices[ip]))
+
+    return jsonify(web_result)
+
+
+@app.post("/api/devices/add")
+@require_api_key
+def api_add_device():
+    """Manually add a device by IP address."""
+    ip = (request.json or {}).get("ip", "").strip()
+    if not ip:
+        return jsonify(error="missing ip"), 400
+
+    valid, reason = _validate_ip(ip)
+    if not valid:
+        return jsonify(error=reason), 400
+
+    with state.lock:
+        state.devices[ip] = {"ip": ip, "online": False, "error": "waiting"}
+
+    def _background_add() -> None:
+        result = query_device(ip)
+        with state.lock:
+            state.devices[ip] = result
+
+    threading.Thread(target=_background_add, daemon=True).start()
+    return jsonify(ok=True)
+
+
+@app.post("/api/device/<ip>/relay/<rid>/<act>")
+@require_api_key
+def api_relay(ip: str, rid: str, act: str):
+    """Toggle a relay on a device."""
+    ok, msg = toggle_relay(ip, rid, act)
     if ok:
-        with s.lock: s.devices[ip]=query(ip)
-    return jsonify(success=ok,message=msg)
-def loop():
+        # Re‑query outside the lock, then update under the lock
+        refreshed = query_device(ip)
+        with state.lock:
+            state.devices[ip] = refreshed
+    return jsonify(success=ok, message=msg)
+
+
+# ── Background refresh loop ─────────────────────────────────────────
+
+def _refresh_loop() -> None:
+    """Periodically refresh device data in the background."""
     while True:
-        time.sleep(s.cfg['refresh'])
-        try: refresh()
-        except Exception: pass
-HTML=r"""<!doctype html>
+        time.sleep(state.cfg.refresh)
+        try:
+            refresh_devices()
+        except Exception as exc:
+            log.error("Background refresh failed: %s", exc)
+
+
+
+# ── HTML template (preserved from original) ────────────────────────
+HTML = r"""<!doctype html>
 <html lang="pl">
 <head>
 <meta charset="utf-8">
@@ -596,9 +1302,45 @@ load();setInterval(load,{{refresh}}*1000);
 </script>
 </body>
 </html>"""
-def main():
-    p=argparse.ArgumentParser(); p.add_argument('--host',default='0.0.0.0'); p.add_argument('--port',type=int,default=5000); p.add_argument('--devices',default=''); p.add_argument('--network'); p.add_argument('--no-mdns',action='store_true'); p.add_argument('--timeout',type=float,default=3); p.add_argument('--mdns-timeout',type=float,default=5); p.add_argument('--refresh',type=int,default=15); p.add_argument('--user'); p.add_argument('--password')
-    a=p.parse_args(); s.cfg.update({'timeout':a.timeout,'refresh':a.refresh,'mdns_timeout':a.mdns_timeout,'user':a.user,'password':a.password,'devices':[x.strip() for x in a.devices.split(',') if x.strip()],'network':a.network,'use_mdns':not a.no_mdns})
-    print('Shelly Dashboard Add-on listening on',a.host,a.port)
-    threading.Thread(target=discover,daemon=True).start(); threading.Thread(target=loop,daemon=True).start(); app.run(host=a.host,port=a.port,threaded=True,debug=False)
-if __name__=='__main__': main()
+
+
+# ── CLI entry point ──────────────────────────────────────────────────
+
+def main() -> None:
+    """Parse arguments and start the dashboard."""
+    parser = argparse.ArgumentParser(description="Shelly Dashboard Add‑on")
+    parser.add_argument("--host", default="0.0.0.0", help="Bind address")
+    parser.add_argument("--port", type=int, default=5000, help="Bind port")
+    parser.add_argument("--devices", default="", help="Comma‑separated list of device IPs")
+    parser.add_argument("--network", help="CIDR range to scan, e.g. 192.168.1.0/24")
+    parser.add_argument("--no-mdns", action="store_true", help="Disable mDNS discovery")
+    parser.add_argument("--timeout", type=float, default=3, help="HTTP timeout in seconds")
+    parser.add_argument("--mdns-timeout", type=float, default=5, help="mDNS browse time")
+    parser.add_argument("--refresh", type=int, default=15, help="Auto‑refresh interval (s)")
+    parser.add_argument("--user", help="Username for device auth")
+    parser.add_argument("--password", help="Password for device auth")
+    parser.add_argument("--api-key", help="Optional API key for mutating endpoints")
+
+    args = parser.parse_args()
+
+    state.cfg = Config(
+        timeout=args.timeout,
+        refresh=args.refresh,
+        mdns_timeout=args.mdns_timeout,
+        user=args.user,
+        password=args.password,
+        devices=[x.strip() for x in args.devices.split(",") if x.strip()],
+        network=args.network,
+        use_mdns=not args.no_mdns,
+        api_key=args.api_key,
+    )
+
+    log.info("Shelly Dashboard listening on %s:%d", args.host, args.port)
+
+    threading.Thread(target=discover_devices, daemon=True).start()
+    threading.Thread(target=_refresh_loop, daemon=True).start()
+    app.run(host=args.host, port=args.port, threaded=True, debug=False)
+
+
+if __name__ == "__main__":
+    main()
