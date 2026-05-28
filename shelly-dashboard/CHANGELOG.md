@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.9.1
+
+- Nagłówek karty urządzenia: **nazwa zdefiniowana przez użytkownika** (z `Shelly.GetConfig` / `/settings` → `name`)
+- Hostname przeniesiony do podtytułu (obok IP i Gen)
+- Fallback: gdy brak nazwy → hostname → model
+- Sortowanie również po nazwie użytkownika
+
 ## 1.9.0
 
 - Górna belka statystyk: kompaktowa, **wszystkie 10 kafelków w jednej linii** (poziomy układ, ikona obok wartości)

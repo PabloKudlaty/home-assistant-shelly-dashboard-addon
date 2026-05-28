@@ -510,7 +510,7 @@ function healthBar(d){
 }
 function render(){
   const q=$('q').value.trim();
-  const list=DEVS.filter(d=>passFilter(d)&&matches(d,q)).sort((a,b)=>(a.hostname||a.device_name||a.ip).localeCompare(b.hostname||b.device_name||b.ip));
+  const list=DEVS.filter(d=>passFilter(d)&&matches(d,q)).sort((a,b)=>(a.device_name||a.hostname||a.ip).localeCompare(b.device_name||b.hostname||b.ip));
   const g=$('grid');
   if(!list.length){g.innerHTML=`<div class="empty" style="grid-column:1/-1"><div class="big">📬</div><div>${t('no_devices')}</div></div>`;applyView();return}
   if(VIEW==='list'){
@@ -518,7 +518,7 @@ function render(){
       const fw=(d.firmware_current||d.firmware||'?')+(d.firmware_latest&&d.firmware_latest!=d.firmware_current?` <span class="badge b-warn">→ ${d.firmware_latest}</span>`:'');
       return `<div class="card">
         <div class="head">
-          <div><h3>${d.hostname||d.device_name||d.model||'Shelly'}</h3><div class="ip">${d.ip} · ${d.device_name||d.model||'-'} · Gen ${d.generation||1}</div></div>
+          <div><h3>${d.device_name||d.hostname||d.model||'Shelly'}</h3><div class="ip">${d.ip} · ${d.hostname||d.model||'-'} · Gen ${d.generation||1}</div></div>
           ${statusBadge(d)}
         </div>
         <div class="l-cell"><span class="lbl">${t('health')}</span><span class="val" style="color:var(--${d.health_level==='good'?'ok':d.health_level==='warn'?'warn':'bad'})">${d.health_score!=null?d.health_score+'%':'-'}</span></div>
@@ -543,7 +543,7 @@ function render(){
       <span class="toggle ${x.is_on?'on':''}" onclick="tog('${d.ip}','${x.id}',${x.is_on})"></span></div>`).join('');
     return `<div class="card">
       <div class="head">
-        <div><h3>${d.hostname||d.device_name||d.model||'Shelly'}</h3><div class="ip">${d.ip} · ${d.device_name||d.model||'-'} · Gen ${d.generation||1}</div></div>
+        <div><h3>${d.device_name||d.hostname||d.model||'Shelly'}</h3><div class="ip">${d.ip} · ${d.hostname||d.model||'-'} · Gen ${d.generation||1}</div></div>
         ${statusBadge(d)}
       </div>
       ${healthBar(d)}
