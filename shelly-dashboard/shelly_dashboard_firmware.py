@@ -148,6 +148,13 @@ def query(ip):
             except Exception: pass
             try:
                 cfg=requests.get(f'http://{ip}/rpc/Shelly.GetConfig',timeout=s.cfg['timeout'],auth=auth2()).json(); dev=((cfg.get('sys')or{}).get('device')or{}); d['device_name']=dev.get('name'); d['hostname']=d.get('hostname') or dev.get('hostname') or dev.get('mac')
+                names={}
+                for k,v in cfg.items():
+                    if k.startswith(('switch:','input:','cover:','light:')) and isinstance(v,dict): names[k]=v.get('name')
+                for swx in d.get('switches',[]):
+                    nm=names.get(f"switch:{swx['id']}")
+                    if nm: swx['name']=nm
+                d['channel_names']={k:v for k,v in names.items() if v}
             except Exception: pass
             if not d.get('device_name'):
                 try:
@@ -164,6 +171,11 @@ def query(ip):
             except Exception: pass
             try:
                 sett=requests.get(f'http://{ip}/settings',timeout=s.cfg['timeout'],auth=auth1()).json(); d['device_name']=sett.get('name'); d['hostname']=((sett.get('device') or {}).get('hostname')) or d.get('hostname')
+                rel_names={i:(r.get('name') if isinstance(r,dict) else None) for i,r in enumerate(sett.get('relays') or [])}
+                for swx in d.get('switches',[]):
+                    nm=rel_names.get(int(swx['id'])) if str(swx['id']).isdigit() else None
+                    if nm: swx['name']=nm
+                d['channel_names']={f'switch:{i}':n for i,n in rel_names.items() if n}
             except Exception: pass
             if not d.get('device_name'): d['device_name']=d.get('hostname') or d.get('model')
         d.update(check_fw(ip,d)); d.update(check_web(ip)); d.update(compute_health(d)); return d
@@ -545,7 +557,7 @@ function render(){
   }
   g.innerHTML=list.map(d=>{
     const fw=(d.firmware_current||d.firmware||'?')+(d.firmware_latest&&d.firmware_latest!=d.firmware_current?` <span class="badge b-warn">→ ${d.firmware_latest}</span>`:'');
-    const sw=(d.switches||[]).map(x=>`<div class="sw-row"><span>${t('channel')} ${x.id}${x.power_w!=null?` · <span style="color:var(--mut)">${x.power_w} W</span>`:''}</span>
+    const sw=(d.switches||[]).map(x=>`<div class="sw-row"><span>${x.name?x.name+' <span style="color:var(--mut)">('+t('channel')+' '+x.id+')</span>':t('channel')+' '+x.id}${x.power_w!=null?` · <span style="color:var(--mut)">${x.power_w} W</span>`:''}</span>
       <span class="toggle ${x.is_on?'on':''}" onclick="tog('${d.ip}','${x.id}',${x.is_on})"></span></div>`).join('');
     return `<div class="card">
       <div class="head">

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.10.0
+
+- Pobieranie **nazw kanałów** zdefiniowanych przez użytkownika (Switch/Input/Cover/Light)
+- Gen2+: z `Shelly.GetConfig` (pola `switch:N.name`, `input:N.name`, itd.)
+- Gen1: z `/settings` (`relays[i].name`)
+- Nazwa kanału wyświetlana w karcie obok przycisku ON/OFF (z numerem kanału w nawiasie)
+- API: pole `channel_names` na urządzeniu + `name` w obiekcie switcha
+
 ## 1.9.3
 
 - Hotfix: naprawiono uszkodzony blok Gen1 w `query()` (SyntaxError uniemożliwiał start dodatku po 1.9.2)
