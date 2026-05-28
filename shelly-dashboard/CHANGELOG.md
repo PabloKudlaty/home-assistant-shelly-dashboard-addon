@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.0
+
+- Dashboard: dodano pole **Hostname** na karcie urządzenia (pobierane automatycznie z urządzenia: Gen2+ przez `/shelly` → `id` / `Shelly.GetConfig` → `sys.device.hostname`, Gen1 przez `/settings` → `device.hostname`)
+- Wyszukiwarka obejmuje teraz również hostname
+
 ## 1.1.0
 
 - Przeprojektowany interfejs web dashboardu (nowoczesny wygląd, cienie, zaokrąglenia, hover na kartach)

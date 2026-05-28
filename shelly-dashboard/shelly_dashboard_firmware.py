@@ -87,7 +87,7 @@ def query(ip):
     try:
         if g>=2:
             info=requests.get(f'http://{ip}/rpc/Shelly.GetDeviceInfo',timeout=s.cfg['timeout'],auth=auth2()).json()
-            d.update({'online':True,'model':info.get('model') or info.get('app'),'firmware':info.get('ver') or info.get('fw_id'),'firmware_current':info.get('ver') or info.get('fw_id'),'generation':info.get('gen',2)})
+            d.update({'online':True,'model':info.get('model') or info.get('app'),'firmware':info.get('ver') or info.get('fw_id'),'firmware_current':info.get('ver') or info.get('fw_id'),'generation':info.get('gen',2),'hostname':info.get('id') or info.get('hostname')})
             try:
                 st=requests.get(f'http://{ip}/rpc/Shelly.GetStatus',timeout=s.cfg['timeout'],auth=auth2()).json(); w=st.get('wifi',{}); sys=st.get('sys',{})
                 d.update({'wifi_rssi':w.get('rssi'),'uptime':sys.get('uptime'),'switches':[],'total_power_w':0})
@@ -97,17 +97,18 @@ def query(ip):
                 d['total_power_w']=round(d['total_power_w'],2)
             except Exception: pass
             try:
-                cfg=requests.get(f'http://{ip}/rpc/Shelly.GetConfig',timeout=s.cfg['timeout'],auth=auth2()).json(); d['device_name']=((cfg.get('sys')or{}).get('device')or{}).get('name') or d['model']
+                cfg=requests.get(f'http://{ip}/rpc/Shelly.GetConfig',timeout=s.cfg['timeout'],auth=auth2()).json(); dev=((cfg.get('sys')or{}).get('device')or{}); d['device_name']=dev.get('name') or d.get('model'); d['hostname']=d.get('hostname') or dev.get('hostname') or dev.get('mac')
             except Exception: d['device_name']=d.get('model')
         else:
             info=requests.get(f'http://{ip}/shelly',timeout=s.cfg['timeout'],auth=auth1()).json()
-            d.update({'online':True,'model':info.get('type'),'firmware':info.get('fw'),'firmware_current':info.get('fw')})
+            d.update({'online':True,'model':info.get('type'),'firmware':info.get('fw'),'firmware_current':info.get('fw'),'hostname':info.get('hostname') or info.get('mac')})
             try:
                 st=requests.get(f'http://{ip}/status',timeout=s.cfg['timeout'],auth=auth1()).json(); w=st.get('wifi_sta',{})
                 d.update({'wifi_rssi':w.get('rssi'),'switches':[{'id':i,'is_on':x.get('ison',False)} for i,x in enumerate(st.get('relays',[]))]})
                 m=st.get('meters',[]); d['total_power_w']=round(sum(x.get('power',0) or 0 for x in m),2)
             except Exception: pass
-            try: d['device_name']=requests.get(f'http://{ip}/settings',timeout=s.cfg['timeout'],auth=auth1()).json().get('name') or d.get('model')
+            try:
+                sett=requests.get(f'http://{ip}/settings',timeout=s.cfg['timeout'],auth=auth1()).json(); d['device_name']=sett.get('name') or d.get('model'); d['hostname']=((sett.get('device') or {}).get('hostname')) or d.get('hostname')
             except Exception: d['device_name']=d.get('model')
         d.update(check_fw(ip,d)); return d
     except Exception as e:
@@ -328,7 +329,7 @@ function statusBadge(d){
 function rssiIcon(r){if(!r) return '📶';if(r>-60)return '📶 ●●●';if(r>-75)return '📶 ●●○';return '📶 ●○○'}
 function uptime(s){if(!s) return '-';s=+s;const d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60);return (d?d+'d ':'')+(h?h+'h ':'')+m+'m'}
 function row(k,v){return `<div class="row"><span class="k">${k}</span><span class="vv">${v??'-'}</span></div>`}
-function matches(d,q){if(!q) return true;q=q.toLowerCase();return (d.ip||'').toLowerCase().includes(q)||(d.device_name||'').toLowerCase().includes(q)||(d.model||'').toLowerCase().includes(q)}
+function matches(d,q){if(!q) return true;q=q.toLowerCase();return (d.ip||'').toLowerCase().includes(q)||(d.device_name||'').toLowerCase().includes(q)||(d.model||'').toLowerCase().includes(q)||(d.hostname||'').toLowerCase().includes(q)}
 function passFilter(d){if(FILTER==='online')return d.online;if(FILTER==='offline')return !d.online;if(FILTER==='update')return d.has_update===true;return true}
 function render(){
   const q=$('q').value.trim();
@@ -345,6 +346,7 @@ function render(){
         ${statusBadge(d)}
       </div>
       ${row('Model',d.model||'-')}
+      ${row('Hostname',d.hostname?`<span style="font-family:ui-monospace,Consolas,monospace">${d.hostname}</span>`:'-')}
       ${row('Firmware',fw)}
       ${row('WiFi',d.wifi_rssi?`${rssiIcon(d.wifi_rssi)} ${d.wifi_rssi} dBm`:'-')}
       ${row('Uptime',uptime(d.uptime))}
