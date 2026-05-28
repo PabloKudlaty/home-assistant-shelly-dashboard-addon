@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.1
+
+- Naprawiono błędny komunikat toast podczas testu Web (poprzednio pokazywał „Sprawdzam FW...")
+- Dodano oddzielny klucz tłumaczenia `msg_check_web` (PL/EN)
+
 ## 1.7.0
 
 - Dodano **kontrolę dostępności panelu Web** każdego urządzenia (sprawdzanie `GET http://<ip>/`)

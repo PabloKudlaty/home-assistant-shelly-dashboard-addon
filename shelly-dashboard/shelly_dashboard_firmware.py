@@ -364,7 +364,7 @@ const I18N={
      web_ok_stat:'Web OK',web_bad_stat:'Web błąd',
      b_offline:'Offline',b_update:'⬆ Aktualizacja',b_latest:'Aktualne',b_online:'Online',
      msg_discovering:'Skanowanie sieci...',msg_refreshing:'Odświeżanie...',msg_checking_fw:'Sprawdzanie firmware...',
-     msg_check_one:'Sprawdzam FW...',msg_on:'Włączanie...',msg_off:'Wyłączanie...',msg_add:'Dodano',msg_need_ip:'Podaj IP'},
+     msg_check_one:'Sprawdzam FW...',msg_check_web:'Sprawdzam Web UI...',msg_on:'Włączanie...',msg_off:'Wyłączanie...',msg_add:'Dodano',msg_need_ip:'Podaj IP'},
   en:{theme:'Theme',discover:'Discover',refresh:'Refresh',firmware:'Firmware',devices:'Devices',online:'Online',offline:'Offline',
      total_power:'Total power (W)',updates:'Updates',up_to_date:'Up to date',all:'All',add:'Add',
      search_ph:'🔎 Search by name / IP / model...',ip_ph:'e.g. 192.168.1.50',loading:'Loading...',
@@ -376,7 +376,7 @@ const I18N={
      web_ok_stat:'Web OK',web_bad_stat:'Web error',
      b_offline:'Offline',b_update:'⬆ Update',b_latest:'Up to date',b_online:'Online',
      msg_discovering:'Scanning network...',msg_refreshing:'Refreshing...',msg_checking_fw:'Checking firmware...',
-     msg_check_one:'Checking FW...',msg_on:'Turning on...',msg_off:'Turning off...',msg_add:'Added',msg_need_ip:'Enter IP'}
+     msg_check_one:'Checking FW...',msg_check_web:'Checking Web UI...',msg_on:'Turning on...',msg_off:'Turning off...',msg_add:'Added',msg_need_ip:'Enter IP'}
 };
 let LANG='pl';
 function detectLang(){const s=localStorage.getItem('lang')||'auto';if(s==='pl'||s==='en')return s;const n=(navigator.language||'pl').toLowerCase();return n.startsWith('pl')?'pl':'en'}
@@ -447,7 +447,7 @@ function render(){
         <div class="l-cell"><span class="lbl">${t('uptime')}</span><span class="val">${uptime(d.uptime)}</span></div>
         <div class="actions">
           <button class="btn sm ghost" onclick="call('api/device/${d.ip}/firmware/check','msg_check_one')">⬆</button>
-          <button class="btn sm ghost" onclick="call('api/device/${d.ip}/web/check','msg_check_one')">🌐</button>
+          <button class="btn sm ghost" onclick="call('api/device/${d.ip}/web/check','msg_check_web')">🌐</button>
           <a class="btn sm ghost" href="http://${d.ip}" target="_blank" rel="noopener">🔗</a>
         </div>
       </div>`;
@@ -474,7 +474,7 @@ function render(){
       ${sw?`<div class="switches">${sw}</div>`:''}
       <div class="actions">
         <button class="btn sm ghost" onclick="call('api/device/${d.ip}/firmware/check','msg_check_one')">${t('check_fw')}</button>
-        <button class="btn sm ghost" onclick="call('api/device/${d.ip}/web/check','msg_check_one')">${t('check_web')}</button>
+        <button class="btn sm ghost" onclick="call('api/device/${d.ip}/web/check','msg_check_web')">${t('check_web')}</button>
         <a class="btn sm ghost" href="http://${d.ip}" target="_blank" rel="noopener">${t('web')}</a>
       </div>
     </div>`;
