@@ -82,6 +82,45 @@ def check_fw(ip,dev=None):
                 except Exception: pass
             return fw_status(cur,latest,has=has)
         except Exception as e: return fw_status(cur,err=str(e))
+def compute_health(d):
+    score=0; issues=[]
+    if d.get('online'): score+=35
+    else: issues.append('offline')
+    ws=d.get('web_status')
+    if ws=='ok' and not d.get('web_auth_required'): score+=15
+    elif ws=='ok' and d.get('web_auth_required'): score+=10; issues.append('web_auth')
+    elif ws=='timeout': issues.append('web_timeout')
+    elif ws=='error': issues.append('web_error')
+    elif ws is None: pass
+    fs=d.get('firmware_status')
+    if fs=='latest': score+=15
+    elif fs=='update_available': score+=7; issues.append('fw_update')
+    elif fs=='error': issues.append('fw_check_error')
+    rssi=d.get('wifi_rssi')
+    if rssi is None: pass
+    elif rssi>-60: score+=10
+    elif rssi>-70: score+=7
+    elif rssi>-80: score+=3; issues.append('wifi_weak')
+    else: issues.append('wifi_poor')
+    wifi_ok=rssi is not None
+    eth_ok=bool(d.get('eth_connected'))
+    if wifi_ok or eth_ok: score+=10
+    else: issues.append('no_connectivity')
+    if d.get('error'): issues.append('api_error')
+    else: score+=5
+    up=d.get('uptime')
+    if up is None: pass
+    elif up>=300: score+=5
+    else: issues.append('recent_reboot')
+    lat=d.get('web_latency_ms')
+    if lat is None: pass
+    elif lat<500: score+=5
+    elif lat<1000: score+=3
+    elif lat<2000: score+=1; issues.append('web_slow')
+    else: issues.append('web_slow')
+    score=max(0,min(100,score))
+    level='good' if score>=85 else ('warn' if score>=60 else 'bad')
+    return {'health_score':score,'health_level':level,'health_issues':issues}
 def check_web(ip):
     t0=time.time()
     try:
@@ -121,9 +160,9 @@ def query(ip):
             try:
                 sett=requests.get(f'http://{ip}/settings',timeout=s.cfg['timeout'],auth=auth1()).json(); d['device_name']=sett.get('name') or d.get('model'); d['hostname']=((sett.get('device') or {}).get('hostname')) or d.get('hostname')
             except Exception: d['device_name']=d.get('model')
-        d.update(check_fw(ip,d)); d.update(check_web(ip)); return d
+        d.update(check_fw(ip,d)); d.update(check_web(ip)); d.update(compute_health(d)); return d
     except Exception as e:
-        d['error']=str(e); d.update(check_web(ip)); return d
+        d['error']=str(e); d.update(check_web(ip)); d.update(compute_health(d)); return d
 def refresh():
     s.refreshing=True
     with s.lock: ips=list(s.devices.keys())
@@ -146,7 +185,10 @@ def fw_all():
     with ThreadPoolExecutor(max_workers=24) as ex:
         futs={ex.submit(check_fw,ip,d):ip for ip,d in snap.items()}
         for f in as_completed(futs):
-            with s.lock: s.devices.setdefault(futs[f],{'ip':futs[f]}).update(f.result())
+            ip=futs[f]
+            with s.lock:
+                s.devices.setdefault(ip,{'ip':ip}).update(f.result())
+                s.devices[ip].update(compute_health(s.devices[ip]))
     s.last_fw=now(); s.fw=False
 def relay(ip,rid,act):
     try:
@@ -164,7 +206,7 @@ def api_devices():
 @app.get('/api/summary')
 def api_summary():
     with s.lock: ds=list(s.devices.values())
-    return jsonify({'total':len(ds),'online':sum(1 for d in ds if d.get('online')),'offline':sum(1 for d in ds if not d.get('online')),'power':round(sum(d.get('total_power_w',0) or 0 for d in ds),2),'updates':sum(1 for d in ds if d.get('has_update') is True),'latest':sum(1 for d in ds if d.get('firmware_status')=='latest'),'web_ok':sum(1 for d in ds if d.get('web_status')=='ok'),'web_bad':sum(1 for d in ds if d.get('web_status') in ('error','timeout'))})
+    return jsonify({'total':len(ds),'online':sum(1 for d in ds if d.get('online')),'offline':sum(1 for d in ds if not d.get('online')),'power':round(sum(d.get('total_power_w',0) or 0 for d in ds),2),'updates':sum(1 for d in ds if d.get('has_update') is True),'latest':sum(1 for d in ds if d.get('firmware_status')=='latest'),'web_ok':sum(1 for d in ds if d.get('web_status')=='ok'),'web_bad':sum(1 for d in ds if d.get('web_status') in ('error','timeout')),'health_avg':round(sum(d.get('health_score',0) or 0 for d in ds)/len(ds),1) if ds else 0,'health_issues':sum(1 for d in ds if d.get('health_level')!='good')})
 @app.post('/api/refresh')
 def api_refresh(): threading.Thread(target=refresh,daemon=True).start(); return jsonify(ok=True)
 @app.post('/api/discover')
@@ -175,12 +217,16 @@ def api_fw_all(): threading.Thread(target=fw_all,daemon=True).start(); return js
 def api_fw_one(ip):
     with s.lock: dev=s.devices.get(ip,{'ip':ip})
     fw=check_fw(ip,dev)
-    with s.lock: s.devices.setdefault(ip,{'ip':ip}).update(fw)
+    with s.lock:
+        s.devices.setdefault(ip,{'ip':ip}).update(fw)
+        s.devices[ip].update(compute_health(s.devices[ip]))
     return jsonify(fw)
 @app.post('/api/device/<ip>/web/check')
 def api_web_one(ip):
     w=check_web(ip)
-    with s.lock: s.devices.setdefault(ip,{'ip':ip}).update(w)
+    with s.lock:
+        s.devices.setdefault(ip,{'ip':ip}).update(w)
+        s.devices[ip].update(compute_health(s.devices[ip]))
     return jsonify(w)
 @app.post('/api/devices/add')
 def api_add():
@@ -265,6 +311,17 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:'Segoe UI',syst
 .view-btns{display:inline-flex;border:1px solid var(--border);border-radius:10px;overflow:hidden}
 .view-btns button{background:transparent;border:0;color:var(--mut);padding:7px 10px;cursor:pointer;font-size:1rem}
 .view-btns button.active{background:var(--accent);color:#fff}
+.health{display:flex;align-items:center;gap:8px;margin:2px 0 4px}
+.health .hbar{flex:1;height:8px;border-radius:6px;background:rgba(148,163,184,.25);overflow:hidden;position:relative}
+.health .hfill{height:100%;border-radius:6px;transition:width .4s}
+.health.good .hfill{background:var(--ok)}
+.health.warn .hfill{background:var(--warn)}
+.health.bad .hfill{background:var(--bad)}
+.health .hval{font-weight:800;font-size:.85rem;min-width:48px;text-align:right}
+.health.good .hval{color:var(--ok)} .health.warn .hval{color:var(--warn)} .health.bad .hval{color:var(--bad)}
+.issues{display:flex;gap:4px;flex-wrap:wrap;margin-top:-2px}
+.issues .pill{font-size:.66rem;padding:2px 7px;border-radius:999px;background:rgba(245,158,11,.15);color:var(--warn);font-weight:700}
+.issues .pill.bad{background:rgba(239,68,68,.15);color:var(--bad)}
 .card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px;
   box-shadow:var(--shadow);display:flex;flex-direction:column;gap:10px;transition:transform .12s}
 .card:hover{transform:translateY(-2px)}
@@ -331,6 +388,8 @@ html[data-theme="light"] .sw-row{background:rgba(15,23,42,.04)}
     <div class="stat"><span class="ico">✅</span><div class="v" id="latest">-</div><div class="l" data-i18n="up_to_date">Aktualne</div></div>
     <div class="stat"><span class="ico">🌐</span><div class="v" id="web_ok">-</div><div class="l" data-i18n="web_ok_stat">Web OK</div></div>
     <div class="stat"><span class="ico">⚠️</span><div class="v" id="web_bad">-</div><div class="l" data-i18n="web_bad_stat">Web błąd</div></div>
+    <div class="stat"><span class="ico">❤️</span><div class="v" id="health_avg">-</div><div class="l" data-i18n="health_avg">Średnia kondycja</div></div>
+    <div class="stat"><span class="ico">🚨</span><div class="v" id="health_issues">-</div><div class="l" data-i18n="health_issues_stat">Problemy</div></div>
   </div>
 
   <div class="bar">
@@ -342,6 +401,7 @@ html[data-theme="light"] .sw-row{background:rgba(15,23,42,.04)}
       <span class="chip" data-f="online" onclick="setFilter('online')" data-i18n="online">Online</span>
       <span class="chip" data-f="offline" onclick="setFilter('offline')" data-i18n="offline">Offline</span>
       <span class="chip" data-f="update" onclick="setFilter('update')">⬆ <span data-i18n="updates">Aktualizacje</span></span>
+      <span class="chip" data-f="issues" onclick="setFilter('issues')">🚨 <span data-i18n="issues_filter">Problemy</span></span>
     </div>
   </div>
 
@@ -362,6 +422,10 @@ const I18N={
      eth_na:'N/A',eth_none:'brak',eth_disc:'odłączony',eth_conn:'połączony',
      web_label:'Web UI',web_ok:'OK',web_timeout:'timeout',web_error:'błąd',web_auth:'wymaga logowania',web_never:'nie sprawdzano',
      web_ok_stat:'Web OK',web_bad_stat:'Web błąd',
+     health:'Kondycja',health_avg:'Średnia kondycja',health_issues_stat:'Problemy',issues_filter:'Problemy',
+     iss_offline:'Offline',iss_web_auth:'Web: wymaga logowania',iss_web_timeout:'Web: timeout',iss_web_error:'Web: błąd',
+     iss_fw_update:'Dostępna aktualizacja FW',iss_fw_check_error:'Błąd sprawdzania FW',iss_wifi_weak:'Słaby sygnał WiFi',iss_wifi_poor:'Bardzo słaby sygnał WiFi',
+     iss_no_connectivity:'Brak łączności',iss_api_error:'Błąd API',iss_recent_reboot:'Niedawny restart',iss_web_slow:'Wolny Web UI',
      b_offline:'Offline',b_update:'⬆ Aktualizacja',b_latest:'Aktualne',b_online:'Online',
      msg_discovering:'Skanowanie sieci...',msg_refreshing:'Odświeżanie...',msg_checking_fw:'Sprawdzanie firmware...',
      msg_check_one:'Sprawdzam FW...',msg_check_web:'Sprawdzam Web UI...',msg_on:'Włączanie...',msg_off:'Wyłączanie...',msg_add:'Dodano',msg_need_ip:'Podaj IP'},
@@ -374,6 +438,10 @@ const I18N={
      eth_na:'N/A',eth_none:'none',eth_disc:'disconnected',eth_conn:'connected',
      web_label:'Web UI',web_ok:'OK',web_timeout:'timeout',web_error:'error',web_auth:'auth required',web_never:'not checked',
      web_ok_stat:'Web OK',web_bad_stat:'Web error',
+     health:'Health',health_avg:'Avg health',health_issues_stat:'Issues',issues_filter:'Issues',
+     iss_offline:'Offline',iss_web_auth:'Web: auth required',iss_web_timeout:'Web: timeout',iss_web_error:'Web: error',
+     iss_fw_update:'Firmware update available',iss_fw_check_error:'Firmware check failed',iss_wifi_weak:'Weak WiFi signal',iss_wifi_poor:'Very poor WiFi signal',
+     iss_no_connectivity:'No connectivity',iss_api_error:'API error',iss_recent_reboot:'Recently rebooted',iss_web_slow:'Slow Web UI',
      b_offline:'Offline',b_update:'⬆ Update',b_latest:'Up to date',b_online:'Online',
      msg_discovering:'Scanning network...',msg_refreshing:'Refreshing...',msg_checking_fw:'Checking firmware...',
      msg_check_one:'Checking FW...',msg_check_web:'Checking Web UI...',msg_on:'Turning on...',msg_off:'Turning off...',msg_add:'Added',msg_need_ip:'Enter IP'}
@@ -401,6 +469,8 @@ async function load(){
   $('offline').textContent=sum.offline??'-'; $('power').textContent=(sum.power??0).toFixed(1);
   $('updates').textContent=sum.updates??'-'; $('latest').textContent=sum.latest??'-';
   $('web_ok').textContent=sum.web_ok??'-'; $('web_bad').textContent=sum.web_bad??'-';
+  $('health_avg').textContent=sum.health_avg!=null?sum.health_avg+'%':'-';
+  $('health_issues').textContent=sum.health_issues??'-';
   const d=await j(api('api/devices')); DEVS=d.devices||[];
   $('foot').textContent=`${t('last_refresh')}: ${d.last_refresh||'-'} · ${t('fw')}: ${d.last_firmware_check||'-'}${d.refreshing?' · '+t('refreshing_status'):''}`;
   render();
@@ -425,7 +495,16 @@ function webStatus(d){
 function uptime(s){if(!s) return '-';s=+s;const d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60);return (d?d+'d ':'')+(h?h+'h ':'')+m+'m'}
 function row(k,v){return `<div class="row"><span class="k">${k}</span><span class="vv">${v??'-'}</span></div>`}
 function matches(d,q){if(!q) return true;q=q.toLowerCase();return (d.ip||'').toLowerCase().includes(q)||(d.device_name||'').toLowerCase().includes(q)||(d.model||'').toLowerCase().includes(q)||(d.hostname||'').toLowerCase().includes(q)}
-function passFilter(d){if(FILTER==='online')return d.online;if(FILTER==='offline')return !d.online;if(FILTER==='update')return d.has_update===true;return true}
+function passFilter(d){if(FILTER==='online')return d.online;if(FILTER==='offline')return !d.online;if(FILTER==='update')return d.has_update===true;if(FILTER==='issues')return d.health_level&&d.health_level!=='good';return true}
+function healthBar(d){
+  if(d.health_score==null) return '';
+  const lvl=d.health_level||'good';
+  const iss=(d.health_issues||[]).map(k=>{const bad=['offline','web_timeout','web_error','no_connectivity','api_error','wifi_poor'].includes(k);return `<span class="pill ${bad?'bad':''}">${t('iss_'+k)||k}</span>`}).join('');
+  return `<div class="health ${lvl}" title="${t('health')}: ${d.health_score}%">
+    <div class="hbar"><div class="hfill" style="width:${d.health_score}%"></div></div>
+    <div class="hval">${d.health_score}%</div>
+  </div>${iss?`<div class="issues">${iss}</div>`:''}`;
+}
 function render(){
   const q=$('q').value.trim();
   const list=DEVS.filter(d=>passFilter(d)&&matches(d,q)).sort((a,b)=>(a.device_name||a.ip).localeCompare(b.device_name||b.ip));
@@ -439,6 +518,7 @@ function render(){
           <div><h3>${d.device_name||d.model||'Shelly'}</h3><div class="ip">${d.ip} · Gen ${d.generation||1}</div></div>
           ${statusBadge(d)}
         </div>
+        <div class="l-cell"><span class="lbl">${t('health')}</span><span class="val" style="color:var(--${d.health_level==='good'?'ok':d.health_level==='warn'?'warn':'bad'})">${d.health_score!=null?d.health_score+'%':'-'}</span></div>
         <div class="l-cell"><span class="lbl">${t('fw')}</span><span class="val">${fw}</span></div>
         <div class="l-cell"><span class="lbl">${t('wifi')}</span><span class="val">${d.wifi_rssi?d.wifi_rssi+' dBm':'-'}</span></div>
         <div class="l-cell"><span class="lbl">${t('eth')}</span><span class="val">${ethStatus(d)}</span></div>
@@ -463,6 +543,7 @@ function render(){
         <div><h3>${d.device_name||d.model||'Shelly'}</h3><div class="ip">${d.ip} · Gen ${d.generation||1}</div></div>
         ${statusBadge(d)}
       </div>
+      ${healthBar(d)}
       ${row(t('model'),d.model||'-')}
       ${row(t('hostname'),d.hostname?`<span style="font-family:ui-monospace,Consolas,monospace">${d.hostname}</span>`:'-')}
       ${row(t('fw'),fw)}

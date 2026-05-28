@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.8.0
+
+- Dodano **wskaźnik kondycji urządzenia (Health Score 0–100)** wyliczany na podstawie ważonej oceny:
+  - Online (35), Web UI (15), Firmware aktualny (15), Siła WiFi (10), Łączność WiFi/Eth (10), Brak błędów API (5), Uptime >5 min (5), Czas odpowiedzi Web <500 ms (5)
+- Próg kolorów: **≥85** zielony / **60–84** żółty / **<60** czerwony
+- Kolorowy **pasek kondycji** na każdej karcie + lista pigułek z wykrytymi problemami (offline, słaby WiFi, dostępny FW, timeout Web itd.)
+- Nowy kafelek **Średnia kondycja** (%) i **Problemy** (liczba urządzeń poniżej „good")
+- Nowy filtr **🚨 Problemy** w pasku chipów
+- Pełne tłumaczenia PL/EN dla wszystkich nowych etykiet i problemów
+
 ## 1.7.1
 
 - Naprawiono błędny komunikat toast podczas testu Web (poprzednio pokazywał „Sprawdzam FW...")
