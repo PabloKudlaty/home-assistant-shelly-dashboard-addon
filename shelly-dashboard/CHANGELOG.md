@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.6.0
+
+- Dodano **trzy tryby widoku** urządzeń przełączane w pasku narzędziowym:
+  - ▣ **Large** — domyślne duże karty (jak dotychczas)
+  - ▦ **Small** — mała siatka, kompaktowe karty
+  - ☰ **List** — widok listy (jeden wiersz na urządzenie z najważniejszymi danymi)
+- Wybrany widok zapamiętywany w `localStorage` (`view`)
+
 ## 1.5.1
 
 - Naprawiono brakujący przełącznik języka w pasku narzędziowym (selektor `🌐 Auto / 🇵🇱 Polski / 🇬🇧 English`)

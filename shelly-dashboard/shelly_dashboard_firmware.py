@@ -229,6 +229,26 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:'Segoe UI',syst
   background:transparent;color:var(--mut);font-size:.85rem;font-weight:600}
 .chip.active{background:var(--accent);color:#fff;border-color:transparent}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:14px}
+.grid.view-small{grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:10px}
+.grid.view-small .card{padding:12px;gap:6px;font-size:.85rem}
+.grid.view-small .card h3{font-size:.95rem}
+.grid.view-small .row{padding:3px 0;font-size:.78rem}
+.grid.view-small .actions{margin-top:2px}
+.grid.view-small .btn.sm{padding:4px 8px;font-size:.72rem}
+.grid.view-list{display:flex;flex-direction:column;gap:6px}
+.grid.view-list .card{flex-direction:row;align-items:center;gap:14px;padding:10px 14px;flex-wrap:wrap}
+.grid.view-list .card:hover{transform:none}
+.grid.view-list .head{flex:1 1 220px;min-width:200px}
+.grid.view-list .row{border:0;padding:0;font-size:.82rem;display:flex;gap:4px}
+.grid.view-list .row .k{display:none}
+.grid.view-list .switches{flex:0 0 auto;flex-direction:row;gap:8px;margin:0}
+.grid.view-list .actions{margin:0}
+.grid.view-list .l-cell{display:flex;flex-direction:column;min-width:80px}
+.grid.view-list .l-cell .lbl{color:var(--mut);font-size:.65rem;text-transform:uppercase;letter-spacing:.04em}
+.grid.view-list .l-cell .val{font-weight:600;font-size:.85rem}
+.view-btns{display:inline-flex;border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.view-btns button{background:transparent;border:0;color:var(--mut);padding:7px 10px;cursor:pointer;font-size:1rem}
+.view-btns button.active{background:var(--accent);color:#fff}
 .card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px;
   box-shadow:var(--shadow);display:flex;flex-direction:column;gap:10px;transition:transform .12s}
 .card:hover{transform:translateY(-2px)}
@@ -274,6 +294,11 @@ html[data-theme="light"] .sw-row{background:rgba(15,23,42,.04)}
     <option value="pl">🇵🇱 Polski</option>
     <option value="en">🇬🇧 English</option>
   </select>
+  <span class="view-btns" role="group" aria-label="View">
+    <button id="vw-large" onclick="setView('large')" title="Large">▣</button>
+    <button id="vw-small" onclick="setView('small')" title="Small">▦</button>
+    <button id="vw-list" onclick="setView('list')" title="List">☰</button>
+  </span>
   <button class="btn ghost sm" id="themeBtn" onclick="toggleTheme()">🌓 <span data-i18n="theme">Motyw</span></button>
   <button class="btn" onclick="call('api/discover','msg_discovering')">🔍 <span data-i18n="discover">Odkryj</span></button>
   <button class="btn ghost" onclick="call('api/refresh','msg_refreshing')">🔄 <span data-i18n="refresh">Odśwież</span></button>
@@ -337,7 +362,7 @@ function t(k){return (I18N[LANG]&&I18N[LANG][k])||I18N.pl[k]||k}
 function applyI18n(){document.querySelectorAll('[data-i18n]').forEach(el=>{el.textContent=t(el.dataset.i18n)});document.querySelectorAll('[data-i18n-ph]').forEach(el=>{el.placeholder=t(el.dataset.i18nPh)});document.documentElement.lang=LANG}
 function setLang(v){localStorage.setItem('lang',v);LANG=v==='auto'?detectLang():v;applyI18n();render()}
 (function(){const s=localStorage.getItem('lang')||'auto';LANG=s==='auto'?detectLang():s})();
-let DEVS=[], FILTER='all';
+let DEVS=[], FILTER='all', VIEW=(localStorage.getItem('view')||'large');
 const BASE=(location.pathname.endsWith('/')?location.pathname:location.pathname+'/').replace(/\/+$/,'/');
 const api=p=>BASE+p.replace(/^\/+/,'');
 const $=id=>document.getElementById(id);
@@ -346,6 +371,8 @@ function toast(msg){const t=$('toast');t.textContent=msg;t.classList.add('show')
 function toggleTheme(){const h=document.documentElement;const cur=h.getAttribute('data-theme')==='light'?'dark':'light';h.setAttribute('data-theme',cur);localStorage.setItem('theme',cur)}
 (function(){const t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();
 function setFilter(f){FILTER=f;document.querySelectorAll('.chip').forEach(c=>c.classList.toggle('active',c.dataset.f===f));render()}
+function setView(v){VIEW=v;localStorage.setItem('view',v);applyView();render()}
+function applyView(){const g=$('grid');if(!g)return;g.classList.remove('view-large','view-small','view-list');g.classList.add('view-'+VIEW);['large','small','list'].forEach(k=>{const b=$('vw-'+k);if(b)b.classList.toggle('active',k===VIEW)})}
 async function load(){
   const sum=await j(api('api/summary'));
   $('total').textContent=sum.total??'-'; $('online').textContent=sum.online??'-';
@@ -371,7 +398,28 @@ function render(){
   const q=$('q').value.trim();
   const list=DEVS.filter(d=>passFilter(d)&&matches(d,q)).sort((a,b)=>(a.device_name||a.ip).localeCompare(b.device_name||b.ip));
   const g=$('grid');
-  if(!list.length){g.innerHTML=`<div class="empty" style="grid-column:1/-1"><div class="big">📭</div><div>${t('no_devices')}</div></div>`;return}
+  if(!list.length){g.innerHTML=`<div class="empty" style="grid-column:1/-1"><div class="big">📬</div><div>${t('no_devices')}</div></div>`;applyView();return}
+  if(VIEW==='list'){
+    g.innerHTML=list.map(d=>{
+      const fw=(d.firmware_current||d.firmware||'?')+(d.firmware_latest&&d.firmware_latest!=d.firmware_current?` <span class="badge b-warn">→ ${d.firmware_latest}</span>`:'');
+      return `<div class="card">
+        <div class="head">
+          <div><h3>${d.device_name||d.model||'Shelly'}</h3><div class="ip">${d.ip} · Gen ${d.generation||1}</div></div>
+          ${statusBadge(d)}
+        </div>
+        <div class="l-cell"><span class="lbl">${t('fw')}</span><span class="val">${fw}</span></div>
+        <div class="l-cell"><span class="lbl">${t('wifi')}</span><span class="val">${d.wifi_rssi?d.wifi_rssi+' dBm':'-'}</span></div>
+        <div class="l-cell"><span class="lbl">${t('eth')}</span><span class="val">${ethStatus(d)}</span></div>
+        <div class="l-cell"><span class="lbl">${t('power')}</span><span class="val">${d.total_power_w!=null?d.total_power_w+' W':'-'}</span></div>
+        <div class="l-cell"><span class="lbl">${t('uptime')}</span><span class="val">${uptime(d.uptime)}</span></div>
+        <div class="actions">
+          <button class="btn sm ghost" onclick="call('api/device/${d.ip}/firmware/check','msg_check_one')">⬆</button>
+          <a class="btn sm ghost" href="http://${d.ip}" target="_blank" rel="noopener">🔗</a>
+        </div>
+      </div>`;
+    }).join('');
+    applyView();return;
+  }
   g.innerHTML=list.map(d=>{
     const fw=(d.firmware_current||d.firmware||'?')+(d.firmware_latest&&d.firmware_latest!=d.firmware_current?` <span class="badge b-warn">→ ${d.firmware_latest}</span>`:'');
     const sw=(d.switches||[]).map(x=>`<div class="sw-row"><span>${t('channel')} ${x.id}${x.power_w!=null?` · <span style="color:var(--mut)">${x.power_w} W</span>`:''}</span>
@@ -395,6 +443,7 @@ function render(){
       </div>
     </div>`;
   }).join('');
+  applyView();
 }
 async function call(u,msgKey){if(msgKey)toast(t(msgKey)||msgKey);await j(api(u),{method:'POST'});setTimeout(load,1500)}
 async function tog(ip,id,on){await call(`api/device/${ip}/relay/${id}/${on?'off':'on'}`, on?'msg_off':'msg_on')}
@@ -404,6 +453,7 @@ async function add(){const ip=$('ip').value.trim();if(!ip){toast(t('msg_need_ip'
 $('ip').addEventListener('keydown',e=>{if(e.key==='Enter')add()});
 $('langSel').value=localStorage.getItem('lang')||'auto';
 applyI18n();
+applyView();
 load();setInterval(load,{{refresh}}*1000);
 </script>
 </body>
