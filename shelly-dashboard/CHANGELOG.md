@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.0
+
+- Added **English** UI translation alongside Polish
+- Language selector in the toolbar: **Auto / Polski / English** (auto-detected from browser `navigator.language`)
+- Choice persisted in `localStorage` (`lang` key)
+- All labels, placeholders, badges, toasts and stats are translated
+- Dynamic `<html lang>` attribute updated on language change
+
 ## 1.4.0
 
 - **Home Assistant Ingress**: dodatek pojawia się w bocznym pasku HA i otwiera się w głównym ekranie (bez konieczności przechodzenia na osobny port)

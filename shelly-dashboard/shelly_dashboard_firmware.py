@@ -304,6 +304,34 @@ html[data-theme="light"] .sw-row{background:rgba(15,23,42,.04)}
 <div class="toast" id="toast"></div>
 
 <script>
+const I18N={
+  pl:{theme:'Motyw',discover:'Odkryj',refresh:'Odśwież',firmware:'Firmware',devices:'Urządzenia',online:'Online',offline:'Offline',
+     total_power:'Moc całkowita (W)',updates:'Aktualizacje',up_to_date:'Aktualne',all:'Wszystkie',add:'Dodaj',
+     search_ph:'🔎 Szukaj po nazwie / IP / modelu...',ip_ph:'np. 192.168.1.50',loading:'Ładowanie...',
+     last_refresh:'Ostatnie odświeżenie',refreshing_status:'⏳ odświeżanie...',
+     model:'Model',hostname:'Hostname',fw:'Firmware',wifi:'WiFi',eth:'Ethernet',uptime:'Czas pracy',power:'Moc',channel:'Kanał',
+     check_fw:'⬆ Sprawdź FW',web:'🔗 Panel',no_devices:'Brak urządzeń pasujących do filtra',
+     eth_na:'N/A',eth_none:'brak',eth_disc:'odłączony',eth_conn:'połączony',
+     b_offline:'Offline',b_update:'⬆ Aktualizacja',b_latest:'Aktualne',b_online:'Online',
+     msg_discovering:'Skanowanie sieci...',msg_refreshing:'Odświeżanie...',msg_checking_fw:'Sprawdzanie firmware...',
+     msg_check_one:'Sprawdzam FW...',msg_on:'Włączanie...',msg_off:'Wyłączanie...',msg_add:'Dodano',msg_need_ip:'Podaj IP'},
+  en:{theme:'Theme',discover:'Discover',refresh:'Refresh',firmware:'Firmware',devices:'Devices',online:'Online',offline:'Offline',
+     total_power:'Total power (W)',updates:'Updates',up_to_date:'Up to date',all:'All',add:'Add',
+     search_ph:'🔎 Search by name / IP / model...',ip_ph:'e.g. 192.168.1.50',loading:'Loading...',
+     last_refresh:'Last refresh',refreshing_status:'⏳ refreshing...',
+     model:'Model',hostname:'Hostname',fw:'Firmware',wifi:'WiFi',eth:'Ethernet',uptime:'Uptime',power:'Power',channel:'Channel',
+     check_fw:'⬆ Check FW',web:'🔗 Panel',no_devices:'No devices matching filter',
+     eth_na:'N/A',eth_none:'none',eth_disc:'disconnected',eth_conn:'connected',
+     b_offline:'Offline',b_update:'⬆ Update',b_latest:'Up to date',b_online:'Online',
+     msg_discovering:'Scanning network...',msg_refreshing:'Refreshing...',msg_checking_fw:'Checking firmware...',
+     msg_check_one:'Checking FW...',msg_on:'Turning on...',msg_off:'Turning off...',msg_add:'Added',msg_need_ip:'Enter IP'}
+};
+let LANG='pl';
+function detectLang(){const s=localStorage.getItem('lang')||'auto';if(s==='pl'||s==='en')return s;const n=(navigator.language||'pl').toLowerCase();return n.startsWith('pl')?'pl':'en'}
+function t(k){return (I18N[LANG]&&I18N[LANG][k])||I18N.pl[k]||k}
+function applyI18n(){document.querySelectorAll('[data-i18n]').forEach(el=>{el.textContent=t(el.dataset.i18n)});document.querySelectorAll('[data-i18n-ph]').forEach(el=>{el.placeholder=t(el.dataset.i18nPh)});document.documentElement.lang=LANG}
+function setLang(v){localStorage.setItem('lang',v);LANG=v==='auto'?detectLang():v;applyI18n();render()}
+(function(){const s=localStorage.getItem('lang')||'auto';LANG=s==='auto'?detectLang():s})();
 let DEVS=[], FILTER='all';
 const BASE=(location.pathname.endsWith('/')?location.pathname:location.pathname+'/').replace(/\/+$/,'/');
 const api=p=>BASE+p.replace(/^\/+/,'');
@@ -319,17 +347,17 @@ async function load(){
   $('offline').textContent=sum.offline??'-'; $('power').textContent=(sum.power??0).toFixed(1);
   $('updates').textContent=sum.updates??'-'; $('latest').textContent=sum.latest??'-';
   const d=await j(api('api/devices')); DEVS=d.devices||[];
-  $('foot').textContent=`Ostatnie odświeżenie: ${d.last_refresh||'-'} · Firmware: ${d.last_firmware_check||'-'}${d.refreshing?' · ⏳ odświeżanie...':''}`;
+  $('foot').textContent=`${t('last_refresh')}: ${d.last_refresh||'-'} · ${t('fw')}: ${d.last_firmware_check||'-'}${d.refreshing?' · '+t('refreshing_status'):''}`;
   render();
 }
 function statusBadge(d){
-  if(!d.online) return `<span class="badge b-bad">Offline</span>`;
-  if(d.has_update===true) return `<span class="badge b-warn">⬆ Update</span>`;
-  if(d.firmware_status==='latest') return `<span class="badge b-ok">Aktualne</span>`;
-  return `<span class="badge b-info">Online</span>`;
+  if(!d.online) return `<span class="badge b-bad">${t('b_offline')}</span>`;
+  if(d.has_update===true) return `<span class="badge b-warn">${t('b_update')}</span>`;
+  if(d.firmware_status==='latest') return `<span class="badge b-ok">${t('b_latest')}</span>`;
+  return `<span class="badge b-info">${t('b_online')}</span>`;
 }
 function rssiIcon(r){if(!r) return '📶';if(r>-60)return '📶 ●●●';if(r>-75)return '📶 ●●○';return '📶 ●○○'}
-function ethStatus(d){if(d.generation&&d.generation<2) return '<span class="badge b-info">N/A</span>';if(d.eth_supported===false) return '<span class="badge b-info">brak</span>';if(d.eth_connected) return `<span class="badge b-ok">🔌 ${d.eth_ip||'połączony'}</span>`;if(d.eth_supported) return '<span class="badge b-bad">odłączony</span>';return '<span class="badge b-info">-</span>'}
+function ethStatus(d){if(d.generation&&d.generation<2) return `<span class="badge b-info">${t('eth_na')}</span>`;if(d.eth_supported===false) return `<span class="badge b-info">${t('eth_none')}</span>`;if(d.eth_connected) return `<span class="badge b-ok">🔌 ${d.eth_ip||t('eth_conn')}</span>`;if(d.eth_supported) return `<span class="badge b-bad">${t('eth_disc')}</span>`;return '<span class="badge b-info">-</span>'}
 function uptime(s){if(!s) return '-';s=+s;const d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60);return (d?d+'d ':'')+(h?h+'h ':'')+m+'m'}
 function row(k,v){return `<div class="row"><span class="k">${k}</span><span class="vv">${v??'-'}</span></div>`}
 function matches(d,q){if(!q) return true;q=q.toLowerCase();return (d.ip||'').toLowerCase().includes(q)||(d.device_name||'').toLowerCase().includes(q)||(d.model||'').toLowerCase().includes(q)||(d.hostname||'').toLowerCase().includes(q)}
@@ -338,37 +366,39 @@ function render(){
   const q=$('q').value.trim();
   const list=DEVS.filter(d=>passFilter(d)&&matches(d,q)).sort((a,b)=>(a.device_name||a.ip).localeCompare(b.device_name||b.ip));
   const g=$('grid');
-  if(!list.length){g.innerHTML=`<div class="empty" style="grid-column:1/-1"><div class="big">📭</div><div>Brak urządzeń pasujących do filtra</div></div>`;return}
+  if(!list.length){g.innerHTML=`<div class="empty" style="grid-column:1/-1"><div class="big">📭</div><div>${t('no_devices')}</div></div>`;return}
   g.innerHTML=list.map(d=>{
     const fw=(d.firmware_current||d.firmware||'?')+(d.firmware_latest&&d.firmware_latest!=d.firmware_current?` <span class="badge b-warn">→ ${d.firmware_latest}</span>`:'');
-    const sw=(d.switches||[]).map(x=>`<div class="sw-row"><span>Kanał ${x.id}${x.power_w!=null?` · <span style="color:var(--mut)">${x.power_w} W</span>`:''}</span>
+    const sw=(d.switches||[]).map(x=>`<div class="sw-row"><span>${t('channel')} ${x.id}${x.power_w!=null?` · <span style="color:var(--mut)">${x.power_w} W</span>`:''}</span>
       <span class="toggle ${x.is_on?'on':''}" onclick="tog('${d.ip}','${x.id}',${x.is_on})"></span></div>`).join('');
     return `<div class="card">
       <div class="head">
         <div><h3>${d.device_name||d.model||'Shelly'}</h3><div class="ip">${d.ip} · Gen ${d.generation||1}</div></div>
         ${statusBadge(d)}
       </div>
-      ${row('Model',d.model||'-')}
-      ${row('Hostname',d.hostname?`<span style="font-family:ui-monospace,Consolas,monospace">${d.hostname}</span>`:'-')}
-      ${row('Firmware',fw)}
-      ${row('WiFi',d.wifi_rssi?`${rssiIcon(d.wifi_rssi)} ${d.wifi_rssi} dBm`:'-')}
-      ${row('Ethernet', ethStatus(d))}
-      ${row('Uptime',uptime(d.uptime))}
-      ${row('Moc',d.total_power_w!=null?d.total_power_w+' W':'-')}
+      ${row(t('model'),d.model||'-')}
+      ${row(t('hostname'),d.hostname?`<span style="font-family:ui-monospace,Consolas,monospace">${d.hostname}</span>`:'-')}
+      ${row(t('fw'),fw)}
+      ${row(t('wifi'),d.wifi_rssi?`${rssiIcon(d.wifi_rssi)} ${d.wifi_rssi} dBm`:'-')}
+      ${row(t('eth'), ethStatus(d))}
+      ${row(t('uptime'),uptime(d.uptime))}
+      ${row(t('power'),d.total_power_w!=null?d.total_power_w+' W':'-')}
       ${sw?`<div class="switches">${sw}</div>`:''}
       <div class="actions">
-        <button class="btn sm ghost" onclick="call('api/device/${d.ip}/firmware/check','Sprawdzam FW...')">⬆ Sprawdź FW</button>
-        <a class="btn sm ghost" href="http://${d.ip}" target="_blank" rel="noopener">🔗 Web</a>
+        <button class="btn sm ghost" onclick="call('api/device/${d.ip}/firmware/check','msg_check_one')">${t('check_fw')}</button>
+        <a class="btn sm ghost" href="http://${d.ip}" target="_blank" rel="noopener">${t('web')}</a>
       </div>
     </div>`;
   }).join('');
 }
-async function call(u,msg){if(msg)toast(msg);await j(api(u),{method:'POST'});setTimeout(load,1500)}
-async function tog(ip,id,on){await call(`api/device/${ip}/relay/${id}/${on?'off':'on'}`, on?'Wyłączanie...':'Włączanie...')}
-async function add(){const ip=$('ip').value.trim();if(!ip){toast('Podaj IP');return}
+async function call(u,msgKey){if(msgKey)toast(t(msgKey)||msgKey);await j(api(u),{method:'POST'});setTimeout(load,1500)}
+async function tog(ip,id,on){await call(`api/device/${ip}/relay/${id}/${on?'off':'on'}`, on?'msg_off':'msg_on')}
+async function add(){const ip=$('ip').value.trim();if(!ip){toast(t('msg_need_ip'));return}
   await j(api('api/devices/add'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip})});
-  $('ip').value='';toast('Dodano '+ip);setTimeout(load,1200)}
+  $('ip').value='';toast(`${t('msg_add')} ${ip}`);setTimeout(load,1200)}
 $('ip').addEventListener('keydown',e=>{if(e.key==='Enter')add()});
+$('langSel').value=localStorage.getItem('lang')||'auto';
+applyI18n();
 load();setInterval(load,{{refresh}}*1000);
 </script>
 </body>
