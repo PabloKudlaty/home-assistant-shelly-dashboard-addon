@@ -32,11 +32,11 @@ options:
   use_mdns: true
 
 schema:
-  devices: str
-  network: str
-  refresh: int
-  timeout: int
-  mdns_timeout: int
-  user: str
-  password: password
+  devices: str?
+  network: str?
+  refresh: int(1,3600)
+  timeout: int(1,60)
+  mdns_timeout: int(1,60)
+  user: str?
+  password: password?
   use_mdns: bool
