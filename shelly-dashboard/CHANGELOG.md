@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.9.2
+
+- Pobieranie nazwy urządzenia bardziej odporne: Gen2+ używa `Shelly.GetConfig` → fallback `Sys.GetConfig`
+- Gen1: nazwa z `/settings` (pole `name`)
+- Gdy brak nazwy → fallback hostname → model (zamiast od razu na model)
+
 ## 1.9.1
 
 - Nagłówek karty urządzenia: **nazwa zdefiniowana przez użytkownika** (z `Shelly.GetConfig` / `/settings` → `name`)
