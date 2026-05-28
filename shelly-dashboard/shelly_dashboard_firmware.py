@@ -89,8 +89,8 @@ def query(ip):
             info=requests.get(f'http://{ip}/rpc/Shelly.GetDeviceInfo',timeout=s.cfg['timeout'],auth=auth2()).json()
             d.update({'online':True,'model':info.get('model') or info.get('app'),'firmware':info.get('ver') or info.get('fw_id'),'firmware_current':info.get('ver') or info.get('fw_id'),'generation':info.get('gen',2),'hostname':info.get('id') or info.get('hostname')})
             try:
-                st=requests.get(f'http://{ip}/rpc/Shelly.GetStatus',timeout=s.cfg['timeout'],auth=auth2()).json(); w=st.get('wifi',{}); sys=st.get('sys',{})
-                d.update({'wifi_rssi':w.get('rssi'),'uptime':sys.get('uptime'),'switches':[],'total_power_w':0})
+                st=requests.get(f'http://{ip}/rpc/Shelly.GetStatus',timeout=s.cfg['timeout'],auth=auth2()).json(); w=st.get('wifi',{}); sys=st.get('sys',{}); eth=st.get('eth') or {}
+                d.update({'wifi_rssi':w.get('rssi'),'wifi_ssid':w.get('ssid'),'uptime':sys.get('uptime'),'switches':[],'total_power_w':0,'eth_ip':eth.get('ip'),'eth_connected':bool(eth.get('ip')),'eth_supported':'eth' in st})
                 for k,v in st.items():
                     if k.startswith('switch:'):
                         p=v.get('apower',0) or 0; d['switches'].append({'id':k.split(':')[1],'is_on':v.get('output',False),'power_w':p}); d['total_power_w']+=p
@@ -327,6 +327,7 @@ function statusBadge(d){
   return `<span class="badge b-info">Online</span>`;
 }
 function rssiIcon(r){if(!r) return '📶';if(r>-60)return '📶 ●●●';if(r>-75)return '📶 ●●○';return '📶 ●○○'}
+function ethStatus(d){if(d.generation&&d.generation<2) return '<span class="badge b-info">N/A</span>';if(d.eth_supported===false) return '<span class="badge b-info">brak</span>';if(d.eth_connected) return `<span class="badge b-ok">🔌 ${d.eth_ip||'połączony'}</span>`;if(d.eth_supported) return '<span class="badge b-bad">odłączony</span>';return '<span class="badge b-info">-</span>'}
 function uptime(s){if(!s) return '-';s=+s;const d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60);return (d?d+'d ':'')+(h?h+'h ':'')+m+'m'}
 function row(k,v){return `<div class="row"><span class="k">${k}</span><span class="vv">${v??'-'}</span></div>`}
 function matches(d,q){if(!q) return true;q=q.toLowerCase();return (d.ip||'').toLowerCase().includes(q)||(d.device_name||'').toLowerCase().includes(q)||(d.model||'').toLowerCase().includes(q)||(d.hostname||'').toLowerCase().includes(q)}
@@ -349,6 +350,7 @@ function render(){
       ${row('Hostname',d.hostname?`<span style="font-family:ui-monospace,Consolas,monospace">${d.hostname}</span>`:'-')}
       ${row('Firmware',fw)}
       ${row('WiFi',d.wifi_rssi?`${rssiIcon(d.wifi_rssi)} ${d.wifi_rssi} dBm`:'-')}
+      ${row('Ethernet', ethStatus(d))}
       ${row('Uptime',uptime(d.uptime))}
       ${row('Moc',d.total_power_w!=null?d.total_power_w+' W':'-')}
       ${sw?`<div class="switches">${sw}</div>`:''}

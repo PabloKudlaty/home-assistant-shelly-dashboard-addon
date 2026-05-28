@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.3.0
+
+- Dashboard: dodano wiersz **Ethernet** na karcie urządzenia
+- Status połączenia LAN pobierany automatycznie z `Shelly.GetStatus` (`eth.ip`) dla Gen2+
+- Wyświetlanie IP ethernetowego oraz odznaki: 🔌 połączony / odłączony / brak / N/A (Gen1)
+- Dodano też SSID WiFi w danych urządzenia
+
 ## 1.2.0
 
 - Dashboard: dodano pole **Hostname** na karcie urządzenia (pobierane automatycznie z urządzenia: Gen2+ przez `/shelly` → `id` / `Shelly.GetConfig` → `sys.device.hostname`, Gen1 przez `/settings` → `device.hostname`)
