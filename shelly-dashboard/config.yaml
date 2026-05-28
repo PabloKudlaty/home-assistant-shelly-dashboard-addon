@@ -1,5 +1,5 @@
 name: Shelly Dashboard
-version: "1.3.0"
+version: "1.4.0"
 slug: shelly_dashboard
 description: Lokalny dashboard do monitorowania Shelly i firmware
 url: "https://github.com/PabloKudlaty/home-assistant-shelly-dashboard-addon"
@@ -15,11 +15,15 @@ host_network: true
 ports:
   5000/tcp: 5000
 ports_description:
-  5000/tcp: Web UI Shelly Dashboard
+  5000/tcp: Web UI Shelly Dashboard (bezpośredni dostęp)
 
-webui: "http://[HOST]:[PORT:5000]"
+# Home Assistant Ingress — panel w bocznym pasku HA
+ingress: true
+ingress_port: 5000
+ingress_stream: false
 panel_icon: mdi:power-plug
 panel_title: Shelly Dashboard
+panel_admin: false
 
 options:
   devices: ""

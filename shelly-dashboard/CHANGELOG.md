@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.0
+
+- **Home Assistant Ingress**: dodatek pojawia się w bocznym pasku HA i otwiera się w głównym ekranie (bez konieczności przechodzenia na osobny port)
+- `config.yaml`: `ingress: true`, `ingress_port: 5000`, `panel_title`, `panel_icon`, `panel_admin: false`
+- Front-end: wszystkie zapytania do `/api/*` przechodzą teraz przez dynamiczny `BASE` (działa zarówno przez Ingress jak i po bezpośrednim wejściu na port 5000)
+- Zachowano także bezpośredni dostęp przez port `5000` (do użycia poza HA)
+
 ## 1.3.0
 
 - Dashboard: dodano wiersz **Ethernet** na karcie urządzenia

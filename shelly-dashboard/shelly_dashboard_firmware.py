@@ -270,9 +270,9 @@ html[data-theme="light"] .sw-row{background:rgba(15,23,42,.04)}
   <div class="brand"><div class="logo">S</div>Shelly Dashboard</div>
   <div class="spacer"></div>
   <button class="btn ghost sm" id="themeBtn" onclick="toggleTheme()">🌓 Motyw</button>
-  <button class="btn" onclick="call('/api/discover','Skanowanie sieci...')">🔍 Odkryj</button>
-  <button class="btn ghost" onclick="call('/api/refresh','Odświeżanie...')">🔄 Odśwież</button>
-  <button class="btn warn" onclick="call('/api/firmware/check','Sprawdzanie firmware...')">⬆ Firmware</button>
+  <button class="btn" onclick="call('api/discover','Skanowanie sieci...')">🔍 Odkryj</button>
+  <button class="btn ghost" onclick="call('api/refresh','Odświeżanie...')">🔄 Odśwież</button>
+  <button class="btn warn" onclick="call('api/firmware/check','Sprawdzanie firmware...')">⬆ Firmware</button>
 </div>
 
 <div class="wrap">
@@ -305,6 +305,8 @@ html[data-theme="light"] .sw-row{background:rgba(15,23,42,.04)}
 
 <script>
 let DEVS=[], FILTER='all';
+const BASE=(location.pathname.endsWith('/')?location.pathname:location.pathname+'/').replace(/\/+$/,'/');
+const api=p=>BASE+p.replace(/^\/+/,'');
 const $=id=>document.getElementById(id);
 const j=(u,o)=>fetch(u,o).then(r=>r.json()).catch(()=>({}));
 function toast(msg){const t=$('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>t.classList.remove('show'),2200)}
@@ -312,11 +314,11 @@ function toggleTheme(){const h=document.documentElement;const cur=h.getAttribute
 (function(){const t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();
 function setFilter(f){FILTER=f;document.querySelectorAll('.chip').forEach(c=>c.classList.toggle('active',c.dataset.f===f));render()}
 async function load(){
-  const sum=await j('/api/summary');
+  const sum=await j(api('api/summary'));
   $('total').textContent=sum.total??'-'; $('online').textContent=sum.online??'-';
   $('offline').textContent=sum.offline??'-'; $('power').textContent=(sum.power??0).toFixed(1);
   $('updates').textContent=sum.updates??'-'; $('latest').textContent=sum.latest??'-';
-  const d=await j('/api/devices'); DEVS=d.devices||[];
+  const d=await j(api('api/devices')); DEVS=d.devices||[];
   $('foot').textContent=`Ostatnie odświeżenie: ${d.last_refresh||'-'} · Firmware: ${d.last_firmware_check||'-'}${d.refreshing?' · ⏳ odświeżanie...':''}`;
   render();
 }
@@ -355,16 +357,16 @@ function render(){
       ${row('Moc',d.total_power_w!=null?d.total_power_w+' W':'-')}
       ${sw?`<div class="switches">${sw}</div>`:''}
       <div class="actions">
-        <button class="btn sm ghost" onclick="call('/api/device/${d.ip}/firmware/check','Sprawdzam FW...')">⬆ Sprawdź FW</button>
+        <button class="btn sm ghost" onclick="call('api/device/${d.ip}/firmware/check','Sprawdzam FW...')">⬆ Sprawdź FW</button>
         <a class="btn sm ghost" href="http://${d.ip}" target="_blank" rel="noopener">🔗 Web</a>
       </div>
     </div>`;
   }).join('');
 }
-async function call(u,msg){if(msg)toast(msg);await j(u,{method:'POST'});setTimeout(load,1500)}
-async function tog(ip,id,on){await call(`/api/device/${ip}/relay/${id}/${on?'off':'on'}`, on?'Wyłączanie...':'Włączanie...')}
+async function call(u,msg){if(msg)toast(msg);await j(api(u),{method:'POST'});setTimeout(load,1500)}
+async function tog(ip,id,on){await call(`api/device/${ip}/relay/${id}/${on?'off':'on'}`, on?'Wyłączanie...':'Włączanie...')}
 async function add(){const ip=$('ip').value.trim();if(!ip){toast('Podaj IP');return}
-  await j('/api/devices/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip})});
+  await j(api('api/devices/add'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip})});
   $('ip').value='';toast('Dodano '+ip);setTimeout(load,1200)}
 $('ip').addEventListener('keydown',e=>{if(e.key==='Enter')add()});
 load();setInterval(load,{{refresh}}*1000);
