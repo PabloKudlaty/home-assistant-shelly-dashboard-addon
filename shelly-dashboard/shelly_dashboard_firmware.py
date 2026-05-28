@@ -182,7 +182,191 @@ def loop():
         time.sleep(s.cfg['refresh'])
         try: refresh()
         except Exception: pass
-HTML="""<!doctype html><html lang='pl'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>Shelly Dashboard</title><style>body{margin:0;background:#0b1020;color:#e8eefc;font-family:Segoe UI,Arial}.top{padding:18px;background:#111a31;display:flex;justify-content:space-between;flex-wrap:wrap}.btn{border:0;border-radius:9px;padding:9px 12px;background:#3b82f6;color:white;font-weight:700;margin:2px}.yel{background:#f59e0b}.green{background:#22c55e}.wrap{padding:18px}.stats,.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px}.grid{grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}.stat,.card{background:#151b2e;border:1px solid #26314f;border-radius:14px;padding:14px}.v{font-size:1.8rem;font-weight:800}.mut{color:#93a4c7}.badge{border-radius:999px;padding:3px 8px;font-size:.75rem;font-weight:800}.ok{background:#143d28;color:#22c55e}.bad{background:#421b24;color:#ef4444}.warn{background:#493415;color:#f59e0b}.row{display:flex;justify-content:space-between;border-bottom:1px solid #26314f;padding:6px 0}.bar{display:flex;gap:8px;margin:14px 0;flex-wrap:wrap}.inp{padding:10px;border-radius:9px;background:#0f172a;color:#e8eefc;border:1px solid #26314f}.search{flex:1}.toggle{width:44px;height:23px;border-radius:20px;background:#334155;display:inline-block;position:relative;cursor:pointer}.toggle:before{content:'';position:absolute;width:17px;height:17px;border-radius:50%;background:white;top:3px;left:3px}.toggle.on{background:#22c55e}.toggle.on:before{left:24px}</style></head><body><div class='top'><h2>🏠 Shelly Dashboard + Firmware</h2><div><button class='btn' onclick="call('/api/discover')">🔍 Odkryj</button><button class='btn' onclick="call('/api/refresh')">🔄 Odśwież</button><button class='btn yel' onclick="call('/api/firmware/check')">⬆ Firmware</button></div></div><div class='wrap'><div class='stats'><div class='stat'><div id='total' class='v'>-</div><div class='mut'>Urządzenia</div></div><div class='stat'><div id='online' class='v'>-</div><div class='mut'>Online</div></div><div class='stat'><div id='power' class='v'>-</div><div class='mut'>Moc W</div></div><div class='stat'><div id='updates' class='v'>-</div><div class='mut'>Update FW</div></div></div><div class='bar'><input id='q' class='inp search' placeholder='Szukaj...' oninput='render()'><input id='ip' class='inp' placeholder='192.168.1.100'><button class='btn green' onclick='add()'>Dodaj IP</button><span id='st' class='mut'></span></div><div id='grid' class='grid'></div></div><script>let dev=[];async function j(u,o){return (await fetch(u,o)).json()}async function load(){let d=await j('/api/devices');dev=d.devices||[];st.textContent='Odśw: '+(d.last_refresh||'-')+' FW: '+(d.last_firmware_check||'-');let s=await j('/api/summary');total.textContent=s.total;online.textContent=s.online;power.textContent=s.power;updates.textContent=s.updates;render()}function fw(d){return d.firmware_status==='update_available'?'<span class="badge warn">UPDATE</span>':d.firmware_status==='latest'?'<span class="badge ok">LATEST</span>':'<span class="badge">FW?</span>'}function row(a,b){return `<div class='row'><span class='mut'>${a}</span><b>${b??'-'}</b></div>`}function render(){let q=document.getElementById('q').value.toLowerCase();let h='';dev.filter(d=>(`${d.device_name||''} ${d.model||''} ${d.ip}`).toLowerCase().includes(q)).forEach(d=>{h+=`<div class='card'><h3>${d.device_name||d.model||d.ip}</h3>${fw(d)} <span class='badge ${d.online?'ok':'bad'}'>${d.online?'ONLINE':'OFFLINE'}</span>${row('IP',d.ip)}${row('Model',d.model)}${row('FW',(d.firmware_current||d.firmware||'?')+(d.firmware_latest?' → '+d.firmware_latest:''))}${row('WiFi',d.wifi_rssi?d.wifi_rssi+' dBm':'N/A')}${row('Moc',d.total_power_w?d.total_power_w+' W':'-')}`;(d.switches||[]).forEach(sw=>h+=`<div class='row'><span>Kanał ${sw.id}</span><span onclick="tog('${d.ip}','${sw.id}',${sw.is_on})" class='toggle ${sw.is_on?'on':''}'></span></div>`);h+=`<p><button class='btn' onclick="call('/api/device/${d.ip}/firmware/check')">Sprawdź FW</button></p></div>`});grid.innerHTML=h||'<p>Brak urządzeń</p>'}async function call(u){await j(u,{method:'POST'});setTimeout(load,1500)}async function tog(ip,id,on){await call(`/api/device/${ip}/relay/${id}/${on?'off':'on'}`)}async function add(){let ip=document.getElementById('ip').value.trim(); if(!ip)return; await j('/api/devices/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip})}); document.getElementById('ip').value=''; setTimeout(load,1500)}load();setInterval(load,{{refresh}}*1000)</script></body></html>"""
+HTML=r"""<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Shelly Dashboard</title>
+<style>
+:root{
+  --bg:#0b1020; --panel:#151b2e; --panel2:#111a31; --border:#26314f;
+  --text:#e8eefc; --mut:#93a4c7; --accent:#3b82f6; --ok:#22c55e;
+  --warn:#f59e0b; --bad:#ef4444; --shadow:0 6px 24px rgba(0,0,0,.25);
+}
+html[data-theme="light"]{
+  --bg:#f4f6fb; --panel:#ffffff; --panel2:#ffffff; --border:#e2e8f0;
+  --text:#0f172a; --mut:#64748b; --shadow:0 6px 24px rgba(15,23,42,.08);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,Arial,sans-serif;min-height:100vh}
+.top{position:sticky;top:0;z-index:10;padding:14px 22px;background:var(--panel2);
+  border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px;flex-wrap:wrap;box-shadow:var(--shadow)}
+.brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:1.1rem}
+.brand .logo{width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,#3b82f6,#22c55e);
+  display:grid;place-items:center;color:white;font-weight:900}
+.spacer{flex:1}
+.btn{cursor:pointer;border:0;border-radius:10px;padding:9px 14px;background:var(--accent);color:#fff;
+  font-weight:700;display:inline-flex;align-items:center;gap:6px;transition:transform .08s,opacity .15s}
+.btn:hover{opacity:.9} .btn:active{transform:scale(.97)}
+.btn.ghost{background:transparent;color:var(--text);border:1px solid var(--border)}
+.btn.warn{background:var(--warn)} .btn.ok{background:var(--ok)} .btn.bad{background:var(--bad)}
+.btn.sm{padding:6px 10px;font-size:.8rem;border-radius:8px}
+.wrap{padding:22px;max-width:1400px;margin:0 auto}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:18px}
+.stat{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px;box-shadow:var(--shadow)}
+.stat .v{font-size:1.9rem;font-weight:800;line-height:1.1}
+.stat .l{color:var(--mut);font-size:.85rem;margin-top:4px}
+.stat .ico{float:right;font-size:1.4rem;opacity:.6}
+.bar{display:flex;gap:10px;margin:8px 0 18px;flex-wrap:wrap;align-items:center}
+.inp{padding:10px 12px;border-radius:10px;background:var(--panel);color:var(--text);
+  border:1px solid var(--border);min-width:160px;outline:none;transition:border-color .15s}
+.inp:focus{border-color:var(--accent)}
+.search{flex:1;min-width:220px}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{cursor:pointer;padding:6px 12px;border-radius:999px;border:1px solid var(--border);
+  background:transparent;color:var(--mut);font-size:.85rem;font-weight:600}
+.chip.active{background:var(--accent);color:#fff;border-color:transparent}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(310px,1fr));gap:14px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:16px;
+  box-shadow:var(--shadow);display:flex;flex-direction:column;gap:10px;transition:transform .12s}
+.card:hover{transform:translateY(-2px)}
+.card h3{margin:0;font-size:1.05rem;display:flex;align-items:center;gap:8px}
+.card .ip{color:var(--mut);font-size:.8rem;font-family:ui-monospace,Consolas,monospace}
+.head{display:flex;justify-content:space-between;align-items:flex-start;gap:8px}
+.badge{display:inline-block;border-radius:999px;padding:3px 9px;font-size:.7rem;font-weight:800;letter-spacing:.02em}
+.b-ok{background:rgba(34,197,94,.15);color:var(--ok)}
+.b-bad{background:rgba(239,68,68,.15);color:var(--bad)}
+.b-warn{background:rgba(245,158,11,.15);color:var(--warn)}
+.b-info{background:rgba(59,130,246,.15);color:var(--accent)}
+.row{display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px dashed var(--border);font-size:.88rem}
+.row:last-child{border-bottom:0}
+.row .k{color:var(--mut)} .row .vv{font-weight:600}
+.switches{display:flex;flex-direction:column;gap:6px;margin-top:4px}
+.sw-row{display:flex;justify-content:space-between;align-items:center;padding:8px 10px;
+  background:rgba(0,0,0,.15);border-radius:8px}
+html[data-theme="light"] .sw-row{background:rgba(15,23,42,.04)}
+.toggle{width:44px;height:24px;border-radius:20px;background:#475569;position:relative;cursor:pointer;
+  transition:background .2s;flex-shrink:0}
+.toggle:before{content:'';position:absolute;width:18px;height:18px;border-radius:50%;background:#fff;
+  top:3px;left:3px;transition:left .2s}
+.toggle.on{background:var(--ok)} .toggle.on:before{left:23px}
+.actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.empty{text-align:center;padding:60px 20px;color:var(--mut)}
+.empty .big{font-size:3rem;margin-bottom:10px}
+.foot{margin-top:18px;color:var(--mut);font-size:.8rem;text-align:center}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid rgba(255,255,255,.3);
+  border-top-color:#fff;border-radius:50%;animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--panel);
+  border:1px solid var(--border);color:var(--text);padding:10px 16px;border-radius:10px;
+  box-shadow:var(--shadow);opacity:0;pointer-events:none;transition:opacity .2s;z-index:50}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="brand"><div class="logo">S</div>Shelly Dashboard</div>
+  <div class="spacer"></div>
+  <button class="btn ghost sm" id="themeBtn" onclick="toggleTheme()">🌓 Motyw</button>
+  <button class="btn" onclick="call('/api/discover','Skanowanie sieci...')">🔍 Odkryj</button>
+  <button class="btn ghost" onclick="call('/api/refresh','Odświeżanie...')">🔄 Odśwież</button>
+  <button class="btn warn" onclick="call('/api/firmware/check','Sprawdzanie firmware...')">⬆ Firmware</button>
+</div>
+
+<div class="wrap">
+  <div class="stats">
+    <div class="stat"><span class="ico">📦</span><div class="v" id="total">-</div><div class="l">Urządzenia</div></div>
+    <div class="stat"><span class="ico">🟢</span><div class="v" id="online">-</div><div class="l">Online</div></div>
+    <div class="stat"><span class="ico">🔴</span><div class="v" id="offline">-</div><div class="l">Offline</div></div>
+    <div class="stat"><span class="ico">⚡</span><div class="v" id="power">-</div><div class="l">Moc całkowita (W)</div></div>
+    <div class="stat"><span class="ico">⬆</span><div class="v" id="updates">-</div><div class="l">Aktualizacje</div></div>
+    <div class="stat"><span class="ico">✅</span><div class="v" id="latest">-</div><div class="l">Aktualne</div></div>
+  </div>
+
+  <div class="bar">
+    <input class="inp search" id="q" placeholder="🔎 Szukaj po nazwie / IP / modelu..." oninput="render()">
+    <input class="inp" id="ip" placeholder="np. 192.168.1.50" style="max-width:180px">
+    <button class="btn ok" onclick="add()">＋ Dodaj</button>
+    <div class="chips">
+      <span class="chip active" data-f="all" onclick="setFilter('all')">Wszystkie</span>
+      <span class="chip" data-f="online" onclick="setFilter('online')">Online</span>
+      <span class="chip" data-f="offline" onclick="setFilter('offline')">Offline</span>
+      <span class="chip" data-f="update" onclick="setFilter('update')">⬆ Aktualizacje</span>
+    </div>
+  </div>
+
+  <div id="grid" class="grid"></div>
+  <div class="foot" id="foot">Ładowanie...</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+let DEVS=[], FILTER='all';
+const $=id=>document.getElementById(id);
+const j=(u,o)=>fetch(u,o).then(r=>r.json()).catch(()=>({}));
+function toast(msg){const t=$('toast');t.textContent=msg;t.classList.add('show');clearTimeout(toast._t);toast._t=setTimeout(()=>t.classList.remove('show'),2200)}
+function toggleTheme(){const h=document.documentElement;const cur=h.getAttribute('data-theme')==='light'?'dark':'light';h.setAttribute('data-theme',cur);localStorage.setItem('theme',cur)}
+(function(){const t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();
+function setFilter(f){FILTER=f;document.querySelectorAll('.chip').forEach(c=>c.classList.toggle('active',c.dataset.f===f));render()}
+async function load(){
+  const sum=await j('/api/summary');
+  $('total').textContent=sum.total??'-'; $('online').textContent=sum.online??'-';
+  $('offline').textContent=sum.offline??'-'; $('power').textContent=(sum.power??0).toFixed(1);
+  $('updates').textContent=sum.updates??'-'; $('latest').textContent=sum.latest??'-';
+  const d=await j('/api/devices'); DEVS=d.devices||[];
+  $('foot').textContent=`Ostatnie odświeżenie: ${d.last_refresh||'-'} · Firmware: ${d.last_firmware_check||'-'}${d.refreshing?' · ⏳ odświeżanie...':''}`;
+  render();
+}
+function statusBadge(d){
+  if(!d.online) return `<span class="badge b-bad">Offline</span>`;
+  if(d.has_update===true) return `<span class="badge b-warn">⬆ Update</span>`;
+  if(d.firmware_status==='latest') return `<span class="badge b-ok">Aktualne</span>`;
+  return `<span class="badge b-info">Online</span>`;
+}
+function rssiIcon(r){if(!r) return '📶';if(r>-60)return '📶 ●●●';if(r>-75)return '📶 ●●○';return '📶 ●○○'}
+function uptime(s){if(!s) return '-';s=+s;const d=Math.floor(s/86400),h=Math.floor((s%86400)/3600),m=Math.floor((s%3600)/60);return (d?d+'d ':'')+(h?h+'h ':'')+m+'m'}
+function row(k,v){return `<div class="row"><span class="k">${k}</span><span class="vv">${v??'-'}</span></div>`}
+function matches(d,q){if(!q) return true;q=q.toLowerCase();return (d.ip||'').toLowerCase().includes(q)||(d.device_name||'').toLowerCase().includes(q)||(d.model||'').toLowerCase().includes(q)}
+function passFilter(d){if(FILTER==='online')return d.online;if(FILTER==='offline')return !d.online;if(FILTER==='update')return d.has_update===true;return true}
+function render(){
+  const q=$('q').value.trim();
+  const list=DEVS.filter(d=>passFilter(d)&&matches(d,q)).sort((a,b)=>(a.device_name||a.ip).localeCompare(b.device_name||b.ip));
+  const g=$('grid');
+  if(!list.length){g.innerHTML=`<div class="empty" style="grid-column:1/-1"><div class="big">📭</div><div>Brak urządzeń pasujących do filtra</div></div>`;return}
+  g.innerHTML=list.map(d=>{
+    const fw=(d.firmware_current||d.firmware||'?')+(d.firmware_latest&&d.firmware_latest!=d.firmware_current?` <span class="badge b-warn">→ ${d.firmware_latest}</span>`:'');
+    const sw=(d.switches||[]).map(x=>`<div class="sw-row"><span>Kanał ${x.id}${x.power_w!=null?` · <span style="color:var(--mut)">${x.power_w} W</span>`:''}</span>
+      <span class="toggle ${x.is_on?'on':''}" onclick="tog('${d.ip}','${x.id}',${x.is_on})"></span></div>`).join('');
+    return `<div class="card">
+      <div class="head">
+        <div><h3>${d.device_name||d.model||'Shelly'}</h3><div class="ip">${d.ip} · Gen ${d.generation||1}</div></div>
+        ${statusBadge(d)}
+      </div>
+      ${row('Model',d.model||'-')}
+      ${row('Firmware',fw)}
+      ${row('WiFi',d.wifi_rssi?`${rssiIcon(d.wifi_rssi)} ${d.wifi_rssi} dBm`:'-')}
+      ${row('Uptime',uptime(d.uptime))}
+      ${row('Moc',d.total_power_w!=null?d.total_power_w+' W':'-')}
+      ${sw?`<div class="switches">${sw}</div>`:''}
+      <div class="actions">
+        <button class="btn sm ghost" onclick="call('/api/device/${d.ip}/firmware/check','Sprawdzam FW...')">⬆ Sprawdź FW</button>
+        <a class="btn sm ghost" href="http://${d.ip}" target="_blank" rel="noopener">🔗 Web</a>
+      </div>
+    </div>`;
+  }).join('');
+}
+async function call(u,msg){if(msg)toast(msg);await j(u,{method:'POST'});setTimeout(load,1500)}
+async function tog(ip,id,on){await call(`/api/device/${ip}/relay/${id}/${on?'off':'on'}`, on?'Wyłączanie...':'Włączanie...')}
+async function add(){const ip=$('ip').value.trim();if(!ip){toast('Podaj IP');return}
+  await j('/api/devices/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ip})});
+  $('ip').value='';toast('Dodano '+ip);setTimeout(load,1200)}
+$('ip').addEventListener('keydown',e=>{if(e.key==='Enter')add()});
+load();setInterval(load,{{refresh}}*1000);
+</script>
+</body>
+</html>"""
 def main():
     p=argparse.ArgumentParser(); p.add_argument('--host',default='0.0.0.0'); p.add_argument('--port',type=int,default=5000); p.add_argument('--devices',default=''); p.add_argument('--network'); p.add_argument('--no-mdns',action='store_true'); p.add_argument('--timeout',type=float,default=3); p.add_argument('--mdns-timeout',type=float,default=5); p.add_argument('--refresh',type=int,default=15); p.add_argument('--user'); p.add_argument('--password')
     a=p.parse_args(); s.cfg.update({'timeout':a.timeout,'refresh':a.refresh,'mdns_timeout':a.mdns_timeout,'user':a.user,'password':a.password,'devices':[x.strip() for x in a.devices.split(',') if x.strip()],'network':a.network,'use_mdns':not a.no_mdns})
