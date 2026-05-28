@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.5.1
+
+- Naprawiono brakujący przełącznik języka w pasku narzędziowym (selektor `🌐 Auto / 🇵🇱 Polski / 🇬🇧 English`)
+- Dodano atrybuty `data-i18n` / `data-i18n-ph` do wszystkich etykiet, placeholderów i chipów filtrów — teraz `applyI18n()` faktycznie podmienia teksty
+
 ## 1.5.0
 
 - Added **English** UI translation alongside Polish

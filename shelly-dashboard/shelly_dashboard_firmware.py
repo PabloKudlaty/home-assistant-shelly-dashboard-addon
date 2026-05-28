@@ -269,36 +269,41 @@ html[data-theme="light"] .sw-row{background:rgba(15,23,42,.04)}
 <div class="top">
   <div class="brand"><div class="logo">S</div>Shelly Dashboard</div>
   <div class="spacer"></div>
-  <button class="btn ghost sm" id="themeBtn" onclick="toggleTheme()">🌓 Motyw</button>
-  <button class="btn" onclick="call('api/discover','Skanowanie sieci...')">🔍 Odkryj</button>
-  <button class="btn ghost" onclick="call('api/refresh','Odświeżanie...')">🔄 Odśwież</button>
-  <button class="btn warn" onclick="call('api/firmware/check','Sprawdzanie firmware...')">⬆ Firmware</button>
+  <select class="inp" id="langSel" onchange="setLang(this.value)" style="padding:6px 8px;min-width:auto">
+    <option value="auto">🌐 Auto</option>
+    <option value="pl">🇵🇱 Polski</option>
+    <option value="en">🇬🇧 English</option>
+  </select>
+  <button class="btn ghost sm" id="themeBtn" onclick="toggleTheme()">🌓 <span data-i18n="theme">Motyw</span></button>
+  <button class="btn" onclick="call('api/discover','msg_discovering')">🔍 <span data-i18n="discover">Odkryj</span></button>
+  <button class="btn ghost" onclick="call('api/refresh','msg_refreshing')">🔄 <span data-i18n="refresh">Odśwież</span></button>
+  <button class="btn warn" onclick="call('api/firmware/check','msg_checking_fw')">⬆ <span data-i18n="firmware">Firmware</span></button>
 </div>
 
 <div class="wrap">
   <div class="stats">
-    <div class="stat"><span class="ico">📦</span><div class="v" id="total">-</div><div class="l">Urządzenia</div></div>
-    <div class="stat"><span class="ico">🟢</span><div class="v" id="online">-</div><div class="l">Online</div></div>
-    <div class="stat"><span class="ico">🔴</span><div class="v" id="offline">-</div><div class="l">Offline</div></div>
-    <div class="stat"><span class="ico">⚡</span><div class="v" id="power">-</div><div class="l">Moc całkowita (W)</div></div>
-    <div class="stat"><span class="ico">⬆</span><div class="v" id="updates">-</div><div class="l">Aktualizacje</div></div>
-    <div class="stat"><span class="ico">✅</span><div class="v" id="latest">-</div><div class="l">Aktualne</div></div>
+    <div class="stat"><span class="ico">📦</span><div class="v" id="total">-</div><div class="l" data-i18n="devices">Urządzenia</div></div>
+    <div class="stat"><span class="ico">🟢</span><div class="v" id="online">-</div><div class="l" data-i18n="online">Online</div></div>
+    <div class="stat"><span class="ico">🔴</span><div class="v" id="offline">-</div><div class="l" data-i18n="offline">Offline</div></div>
+    <div class="stat"><span class="ico">⚡</span><div class="v" id="power">-</div><div class="l" data-i18n="total_power">Moc całkowita (W)</div></div>
+    <div class="stat"><span class="ico">⬆</span><div class="v" id="updates">-</div><div class="l" data-i18n="updates">Aktualizacje</div></div>
+    <div class="stat"><span class="ico">✅</span><div class="v" id="latest">-</div><div class="l" data-i18n="up_to_date">Aktualne</div></div>
   </div>
 
   <div class="bar">
-    <input class="inp search" id="q" placeholder="🔎 Szukaj po nazwie / IP / modelu..." oninput="render()">
-    <input class="inp" id="ip" placeholder="np. 192.168.1.50" style="max-width:180px">
-    <button class="btn ok" onclick="add()">＋ Dodaj</button>
+    <input class="inp search" id="q" data-i18n-ph="search_ph" placeholder="🔎 Szukaj po nazwie / IP / modelu..." oninput="render()">
+    <input class="inp" id="ip" data-i18n-ph="ip_ph" placeholder="np. 192.168.1.50" style="max-width:180px">
+    <button class="btn ok" onclick="add()">＋ <span data-i18n="add">Dodaj</span></button>
     <div class="chips">
-      <span class="chip active" data-f="all" onclick="setFilter('all')">Wszystkie</span>
-      <span class="chip" data-f="online" onclick="setFilter('online')">Online</span>
-      <span class="chip" data-f="offline" onclick="setFilter('offline')">Offline</span>
-      <span class="chip" data-f="update" onclick="setFilter('update')">⬆ Aktualizacje</span>
+      <span class="chip active" data-f="all" onclick="setFilter('all')" data-i18n="all">Wszystkie</span>
+      <span class="chip" data-f="online" onclick="setFilter('online')" data-i18n="online">Online</span>
+      <span class="chip" data-f="offline" onclick="setFilter('offline')" data-i18n="offline">Offline</span>
+      <span class="chip" data-f="update" onclick="setFilter('update')">⬆ <span data-i18n="updates">Aktualizacje</span></span>
     </div>
   </div>
 
   <div id="grid" class="grid"></div>
-  <div class="foot" id="foot">Ładowanie...</div>
+  <div class="foot" id="foot" data-i18n="loading">Ładowanie...</div>
 </div>
 
 <div class="toast" id="toast"></div>
