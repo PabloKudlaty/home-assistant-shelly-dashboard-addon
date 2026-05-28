@@ -1,0 +1,42 @@
+name: Shelly Dashboard
+version: "1.0.0"
+slug: shelly_dashboard
+description: Lokalny dashboard do monitorowania Shelly i firmware
+url: "https://github.com/YOUR_GITHUB_USER/home-assistant-shelly-dashboard-addon"
+arch:
+  - aarch64
+  - amd64
+  - armv7
+startup: services
+boot: auto
+init: false
+host_network: true
+
+ports:
+  5000/tcp: 5000
+ports_description:
+  5000/tcp: Web UI Shelly Dashboard
+
+webui: "http://[HOST]:[PORT:5000]"
+panel_icon: mdi:power-plug
+panel_title: Shelly Dashboard
+
+options:
+  devices: ""
+  network: ""
+  refresh: 15
+  timeout: 3
+  mdns_timeout: 5
+  user: ""
+  password: ""
+  use_mdns: true
+
+schema:
+  devices: str
+  network: str
+  refresh: int
+  timeout: int
+  mdns_timeout: int
+  user: str
+  password: password
+  use_mdns: bool
